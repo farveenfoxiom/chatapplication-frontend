@@ -1,11 +1,13 @@
 import AppRoutes from "./routes/AppRoutes";
-import { AuthProvider } from "./context/AuthContext";
+import SocketListener from "./components/SocketLisener";
 
 function App() {
   return (
-    <AuthProvider>
-        <AppRoutes />
-    </AuthProvider>
+    <> 
+    <SocketListener/>
+    <AppRoutes/>
+    </>
+    
   );
 }
 

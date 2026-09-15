@@ -3,11 +3,11 @@ import { ArrowLeft, Search, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { searchUsers } from "../services/userService";
-import { useAuth } from "../context/AuthContext";
+import { useSelector } from "react-redux";
 
 function SearchUsers() {
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const token = useSelector((state) => state.auth.token);
   const [search, setSearch] = useState("");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);

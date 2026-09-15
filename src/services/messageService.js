@@ -9,19 +9,25 @@ export const getMessages = async (userId, token) => {
   return response.data;
 };
 
-export const sendMessage = async (receiver, text, token) => {
-  const response = await api.post(
-    "/messages",
-    {
-      receiver,
-      text,
+export const sendMessage = async (receiver, text, token, file = null) => {
+  const formData = new FormData();
+
+  formData.append("receiver", receiver);
+
+  if (text?.trim()) {
+    formData.append("text", text.trim());
+  }
+
+  if (file) {
+    formData.append("file", file);
+  }
+
+  const response = await api.post("/messages", formData, {
+    headers: {
+      Authorization: `Bearer ${token}`,
     },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
+  });
+
   return response.data;
 };
 
@@ -55,8 +61,10 @@ export const markMessagesAsRead = async (userId, token) => {
       },
     }
   );
+
   return response.data;
 };
+
 export const editMessage = async (messageId, text, token) => {
   const response = await api.put(
     `/messages/${messageId}`,

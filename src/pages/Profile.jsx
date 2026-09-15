@@ -9,12 +9,14 @@ import {
 import { useNavigate } from "react-router-dom";
 
 import { getMe, updateMe , uploadProfileImage } from "../services/userService";
-import { useAuth } from "../context/AuthContext";
+import { useSelector,useDispatch } from "react-redux";
+import { updateUser,logout } from "../redux/slices/authSlice";
 
 function Profile() {
   const navigate = useNavigate();
-
-  const {user , token , updateUser, logout} = useAuth();
+  const user = useSelector((state) => state.auth.user);
+  const token = useSelector((state) => state.auth.token);
+  const dispatch = useDispatch();
   const [profile, setProfile] = useState(null);
   const [formData, setFormData] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -64,10 +66,10 @@ function Profile() {
         ...previous,
         profileImage: data.profileImage,
       }));
-      updateUser({
+      dispatch(updateUser({
         ...user,
         profileImage: data.profileImage,
-      });
+      }));
     } catch (error) {
       console.error("Profile image upload error:", error);
       setError(
@@ -98,6 +100,7 @@ function Profile() {
       const data = await updateMe(formData, token);
       setProfile(data.user);
       setFormData(data.user);
+      dispatch(updateUser(data.user));
       setIsEditing(false);
     } catch (error) {
       console.error("Update profile error:", error);
@@ -111,7 +114,7 @@ function Profile() {
   };
 
   const handleLogout = () => {
-    logout();
+    dispatch(logout());
     navigate("/login");
   };
 

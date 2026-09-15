@@ -2,12 +2,13 @@ import { useState } from "react";
 import {Eye , EyeOff , MessageCircle} from "lucide-react";
 import { Link , useNavigate } from "react-router-dom";
 import { loginUser } from "../services/authService";
-import { useAuth } from "../context/AuthContext";
+import { useDispatch } from "react-redux";
+import { login } from "../redux/slices/authSlice";
 
 function Login(){
     const [showPassword , setShowPassword] = useState(false);
     const navigate = useNavigate();
-    const {login} = useAuth();
+    const dispatch = useDispatch();
 
     const [identifier,setIdentifier ] = useState("");
     const [password, setPassword] = useState("");
@@ -20,7 +21,7 @@ function Login(){
         setLoading(true);
         try {
             const data = await loginUser({identifier,password,});
-            login(data);
+            dispatch(login(data));
 
             navigate("/");
         } catch (error) {

@@ -1,49 +1,81 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useSelector, useDispatch } from "react-redux";
 
 import SearchBar from "./SearchBar";
 import ChatItem from "./ChatItem";
-import { getRecentChats,deleteChat,getChatPreview } from "../services/chatService";
-import { useAuth } from "../context/AuthContext";
+import { getRecentChats, deleteChat, getChatPreview } from "../services/chatService";
+import { getUserById } from "../services/userService";
+import {
+  setChats,
+  setLoading,
+  setError,
+  chatBumpedToTop,
+  addChat,
+  updateChat,
+  removeChat,
+} from "../redux/slices/chatSlice";
 
 import socket from "../socket/socket";
 
 function ChatList() {
   const [search, setSearch] = useState("");
-  const [chats, setChats] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const dispatch = useDispatch();
+  const { chats, loading, error } = useSelector((state) => state.chat);
   const navigate = useNavigate();
-  const { token , user : currentUser } = useAuth();
+  const { token, user: currentUser } = useSelector((state) => state.auth);
+  const getMessagePreview = (message) => {
+    if (message?.messageType === "image") {
+      return "📷 Photo";
+    }
+    if (message?.messageType === "file") {
+      return `📎 ${message.fileName || "File"}`;
+    }
+    if (message?.fileUrl && message?.fileName) {
+      const extension = message.fileName
+        .split(".")
+        .pop()
+        ?.toLowerCase();
+      const imageExtensions = [
+        "jpg",
+        "jpeg",
+        "png",
+        "webp",
+        "gif",
+      ];
+      if (imageExtensions.includes(extension)) {
+        return "📷 Photo";
+      }
+      return `📎 ${message.fileName}`;
+    }
+    return message?.text || "";
+  };
   useEffect(() => {
     const fetchChats = async () => {
       try {
-        setLoading(true);
-        setError("");
+        dispatch(setLoading(true));
+        dispatch(setError(""));
         const data = await getRecentChats(token);
-        setChats(data.chats);
+        dispatch(setChats(data.chats));
       } catch (error) {
         console.error("Failed to fetch chats:", error);
-        setError(
-          error.response?.data?.message ||
-          "Failed to load chats"
+        dispatch(
+          setError(error.response?.data?.message || "Failed to load chats")
         );
       } finally {
-        setLoading(false);
+        dispatch(setLoading(false));
       }
     };
     if (token) {
       fetchChats();
     }
-  }, [token]);
-
+  }, [token, dispatch]);
   useEffect(() => {
-    const handleNewMessage = (data) => {
-      console.log("CHAT LIST - MESSAGE EDITED:", data);
+    console.log("CHATLIST SOCKET EFFECT:", socket.connected);
+    const handleNewMessage = async (data) => {
+      console.log("CHAT LIST - NEW MESSAGE:", data);
       const newMessage = data?.message;
-      if (!newMessage) {
-        return;
-      }
+      if (!newMessage) return;
       const senderId =
         newMessage.sender?._id?.toString() ||
         newMessage.sender?.toString();
@@ -53,47 +85,54 @@ function ChatList() {
       const currentUserId =
         currentUser?._id?.toString() ||
         currentUser?.id?.toString();
-      if (!currentUserId) {
+      if (!currentUserId) return;
+      const otherUserId =
+        senderId === currentUserId ? receiverId : senderId;
+      if (!otherUserId) return;
+      const existingChat = chats.find(
+        (chat) =>
+          chat.user._id.toString() ===
+          otherUserId.toString()
+      );
+      if (!existingChat) {
+        try {
+          const data = await getUserById(
+            otherUserId,
+            token
+          );
+          const user = data.user || data;
+          dispatch(
+            addChat({
+              user,
+              lastMessage: getMessagePreview(newMessage),
+              lastMessageTime: newMessage.createdAt,
+              unreadCount:
+                senderId !== currentUserId ? 1 : 0,
+            })
+          );
+        } catch (error) {
+          console.error(
+            "Failed to add new chat:",
+            error
+          );
+        }
         return;
       }
-      const otherUserId =
-        senderId === currentUserId
-          ? receiverId
-          : senderId;
-      setChats((previousChats) => {
-        const existingChat = previousChats.find(
-          (chat) =>
-            chat.user._id.toString() ===
-            otherUserId.toString()
-        );
-        if (!existingChat) {
-          return previousChats;
-        }
-        const updatedChat = {
-          ...existingChat,
-          lastMessage: newMessage.text,
-          lastMessageTime: newMessage.createdAt,
-          unreadCount :
-             senderId !== currentUserId 
-               ? (existingChat.unreadCount || 0) + 1 
-               : existingChat.unreadCount || 0,
-        };
-        const remainingChats = previousChats.filter(
-          (chat) =>
-            chat.user._id.toString() !==
-            otherUserId.toString()
-        );
-        return [
-          updatedChat,
-          ...remainingChats,
-        ];
-      });
+      dispatch(
+        chatBumpedToTop({
+          userId: otherUserId,
+          updates: {
+            lastMessage: getMessagePreview(newMessage),
+            lastMessageTime: newMessage.createdAt,
+          },
+          incrementUnread:
+            senderId !== currentUserId,
+        })
+      );
     };
     const handleMessageEdited = (data) => {
       const updatedMessage = data?.message;
-      if (!updatedMessage) {
-        return;
-      }
+      if (!updatedMessage) return;
       const senderId =
         updatedMessage.sender?._id?.toString() ||
         updatedMessage.sender?.toString();
@@ -103,35 +142,22 @@ function ChatList() {
       const currentUserId =
         currentUser?._id?.toString() ||
         currentUser?.id?.toString();
-      if (!currentUserId) {
-        return;
-      }
+      if (!currentUserId) return;
       const otherUserId =
-        senderId === currentUserId
-          ? receiverId
-          : senderId;
-      setChats((previousChats) => {
-        return previousChats.map((chat) => {
-          const chatUserId =
-            chat.user._id.toString();
-          if (chatUserId !== otherUserId) {
-            return chat;
-          }
-          return {
-            ...chat,
-            lastMessage: updatedMessage.text,
-            lastMessageTime:
-              updatedMessage.createdAt,
-            unreadCount : chat.unreadCount || 0,
-          };
-        });
-      });
+        senderId === currentUserId ? receiverId : senderId;
+      dispatch(
+        updateChat({
+          userId: otherUserId,
+          updates: {
+            lastMessage: getMessagePreview(updatedMessage),
+            lastMessageTime: updatedMessage.createdAt,
+          },
+        })
+      );
     };
     const handleMessageDeleted = async (data) => {
       const { messageId, deleteFor, sender, receiver } = data;
-      if (!messageId || !deleteFor) {
-        return;
-      }
+      if (!messageId || !deleteFor) return;
       const senderId =
         sender?._id?.toString() ||
         sender?.toString();
@@ -141,53 +167,36 @@ function ChatList() {
       const currentUserId =
         currentUser?._id?.toString() ||
         currentUser?.id?.toString();
-      if (!currentUserId) {
-        return;
-      }
+      if (!currentUserId) return;
       const otherUserId =
-        senderId === currentUserId
-          ? receiverId
-          : senderId;
-      if (!otherUserId) {
-        return;
-      }
+        senderId === currentUserId ? receiverId : senderId;
+      if (!otherUserId) return;
       try {
         const data = await getChatPreview(otherUserId, token);
         const preview = data.preview;
-        setChats((previousChats) => {
-          return previousChats.map((chat) => {
-            const chatUserId =
-              chat.user._id.toString();
-            if (chatUserId !== otherUserId) {
-              return chat;
-            }
-            return {
-              ...chat,
+        dispatch(
+          updateChat({
+            userId: otherUserId,
+            updates: {
               lastMessage: preview.lastMessage,
-              lastMessageTime:
-                preview.lastMessageTime ||
-                chat.lastMessageTime,
+              lastMessageTime: preview.lastMessageTime,
               unreadCount: preview.unreadCount,
-            };
-          });
-        });
-      } catch (error) {
-        console.error(
-          "Failed to refresh chat preview:",
-          error
+            },
+          })
         );
+      } catch (error) {
+        console.error("Failed to refresh chat preview:", error);
       }
     };
-    socket.on("new_message",handleNewMessage);
-    socket.on("message_edited",handleMessageEdited);
-    socket.on("message_deleted",handleMessageDeleted);
+    socket.on("new_message", handleNewMessage);
+    socket.on("message_edited", handleMessageEdited);
+    socket.on("message_deleted", handleMessageDeleted);
     return () => {
-      socket.off("new_message",handleNewMessage);
-      socket.off("message_edited",handleMessageEdited);
-      socket.off("message_deleted",handleMessageDeleted);
+      socket.off("new_message", handleNewMessage);
+      socket.off("message_edited", handleMessageEdited);
+      socket.off("message_deleted", handleMessageDeleted);
     };
-  }, [currentUser, token]);
-
+  }, [currentUser, token, chats ,dispatch]);
   const filteredChats = chats.filter((chat) => {
     const query = search.toLowerCase();
     return (
@@ -195,7 +204,6 @@ function ChatList() {
       chat.user.username.toLowerCase().includes(query)
     );
   });
-
   const handleChatClick = (userId) => {
     navigate(`/chat/${userId}`);
   };
@@ -203,25 +211,15 @@ function ChatList() {
     const confirmed = window.confirm(
       "Delete this chat from your recent chats?"
     );
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
     try {
       await deleteChat(userId, token);
-      setChats((previousChats) =>
-        previousChats.filter(
-          (chat) => chat.user._id !== userId
-        )
-      );
+      dispatch(removeChat(userId));
     } catch (error) {
       console.error("Delete chat error:", error);
-      alert(
-        error.response?.data?.message ||
-          "Failed to delete chat"
-      );
+      alert(error.response?.data?.message || "Failed to delete chat");
     }
   };
-
   return (
     <aside className="w-full md:w-96 border-r border-gray-200 bg-white flex flex-col">
       <div className="p-4">
@@ -230,7 +228,8 @@ function ChatList() {
         </h2>
         <SearchBar
           value={search}
-          onChange={(e) => setSearch(e.target.value)}/>
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
       <div className="flex-1 overflow-y-auto px-2 pb-4">
         {loading && (
@@ -258,17 +257,19 @@ function ChatList() {
                 name: chat.user.name,
                 username: chat.user.username,
                 message: chat.lastMessage,
-                time: new Date(
-                  chat.lastMessageTime
-                ).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }),
-                unreadCount : chat.unreadCount,
-                profileImage : chat.user.profileImage,
+                time: new Date(chat.lastMessageTime).toLocaleTimeString(
+                  [],
+                  {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }
+                ),
+                unreadCount: chat.unreadCount,
+                profileImage: chat.user.profileImage,
               }}
               onClick={() => handleChatClick(chat.user._id)}
-              onDelete={handleDeleteChat}/>
+              onDelete={handleDeleteChat}
+            />
           ))}
       </div>
     </aside>

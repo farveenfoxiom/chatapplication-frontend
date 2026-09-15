@@ -1,9 +1,9 @@
 import { MessageCircle, User } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { useSelector } from "react-redux"; 
 
 function Navbar() {
-  const { user } = useAuth();
+  const user = useSelector((state) => state.auth.user); 
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-6">

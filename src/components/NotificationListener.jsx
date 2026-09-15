@@ -2,11 +2,11 @@ import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 
 import socket from "../socket/socket";
-import { useAuth } from "../context/AuthContext";
+import { useSelector } from "react-redux";
 import { requestNotificationPermission,showMessageNotification } from "../utils/Notification";
 
 function NotificationListener() {
-  const { user: currentUser, isAuthenticated } = useAuth();
+  const { user: currentUser, isAuthenticated } = useSelector((state) => state.auth);
   const navigate = useNavigate();
   const location = useLocation();
 
