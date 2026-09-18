@@ -6,6 +6,8 @@ import Home from "../pages/Home";
 import SearchUsers from "../pages/SearchUsers";
 import Profile from "../pages/Profile";
 import Chat from "../pages/Chat";
+import GroupChat from "../pages/groupChat";
+import GroupInfo from "../pages/GroupInfo";
 
 import ProtectedRoute from "./ProtectedRoute";
 import NotificationListener from "../components/NotificationListener";
@@ -49,7 +51,22 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-
+        <Route
+          path="/group/:groupId"
+          element={
+            <ProtectedRoute>
+              <GroupChat />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/group/:groupId/info"
+          element={
+            <ProtectedRoute>
+              <GroupInfo />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

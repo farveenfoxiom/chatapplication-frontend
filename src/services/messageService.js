@@ -1,11 +1,21 @@
 import api from "./api";
 
-export const getMessages = async (userId, token) => {
+export const getMessages = async (userId, token, limit = 20, before = null) => {
+  const params = {
+    limit,
+  };
+
+  if (before) {
+    params.before = before;
+  }
+
   const response = await api.get(`/messages/${userId}`, {
+    params,
     headers: {
       Authorization: `Bearer ${token}`,
     },
   });
+
   return response.data;
 };
 
