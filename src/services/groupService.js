@@ -228,3 +228,26 @@ export const clearGroupChat = async (groupId,token) => {
 
   return response.data;
 };
+
+export const sendGroupLocationMessage = async (
+  groupId,
+  latitude,
+  longitude,
+  token
+) => {
+  const response = await api.post(
+    "/messages/location",
+    {
+      group : groupId,
+      latitude,
+      longitude,
+      isLive : false,
+    },
+    {
+      headers : {
+        Authorization : `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}

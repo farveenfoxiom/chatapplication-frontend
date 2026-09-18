@@ -77,6 +77,11 @@ function ChatList() {
 
     if (message.messageType === "image") return "📷 Photo";
     if (message.messageType === "video") return "🎥 Video";
+    if (message.messageType === "location") {
+      return message.location?.isLive
+      ? "📍 Live location"
+      : "📍 location";
+    }
 
     if (message.messageType === "file") {
       return `📎 ${message.fileName || "File"}`;

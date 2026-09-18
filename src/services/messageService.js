@@ -41,6 +41,29 @@ export const sendMessage = async (receiver, text, token, file = null) => {
   return response.data;
 };
 
+export const sendLocationMessage = async (
+  receiver,
+  latitude,
+  longitude,
+  token
+) => {
+  const response = await api.post(
+    "/messages/location",
+    {
+      receiver,
+      latitude,
+      longitude,
+      isLive: false,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
 export const deleteMessage = async (
   messageId,
   deleteFor,

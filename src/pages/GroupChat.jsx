@@ -14,7 +14,8 @@ import {
   Video,
   Camera,
   Image as ImageIcon,
-  MoreVertical
+  MoreVertical,
+  MapPin
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -25,9 +26,11 @@ import {
   getGroupMessages,
   markGroupMessagesAsRead,
   sendGroupMessage,
+  sendGroupLocationMessage,
   clearGroupChat as clearGroupChatApi,
 } from "../services/groupService";
 import { getUserById } from "../services/userService";
+import LocationMap from "../components/LocationMap";
 import { deleteMessage, editMessage } from "../services/messageService";
 import socket from "../socket/socket";
 import {
@@ -921,6 +924,56 @@ function GroupChat() {
     }
   };
 
+  const handleSendLocation = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by this browser.");
+      return;
+    }
+
+    setShowAttachMenu(false);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+
+          const data = await sendGroupLocationMessage(
+            groupId,
+            latitude,
+            longitude,
+            token
+          );
+
+          setMessages((prev) => {
+            const alreadyExists = prev.some(
+              (m) => m._id === data.message._id
+            );
+
+            if (alreadyExists) return prev;
+
+            const updatedMessages = [...prev, data.message];
+            messagesRef.current = updatedMessages;
+            return updatedMessages;
+          });
+
+          isNearBottomRef.current = true;
+        } catch (err) {
+          console.error("Send location error:", err);
+          setError(
+            err.response?.data?.message || "Failed to send location"
+          );
+        }
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          alert("Location permission was denied.");
+        } else {
+          alert("Unable to get your location.");
+        }
+      }
+    );
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1125,6 +1178,9 @@ function GroupChat() {
     ].some((ext) => fileName.endsWith(ext));
   };
 
+  const isLocationMessage = (msg) => 
+    msg.messageType === "location";
+
   const getFileUrl = (msg) =>
     `${API_BASE_URL}${msg.fileUrl}`;
 
@@ -1283,6 +1339,9 @@ function GroupChat() {
                 const imageMessage =
                   isImageMessage(msg);
 
+                const locationMessage = 
+                  isLocationMessage(msg);
+
                 const videoMessage =
                   isVideoMessage(msg);
 
@@ -1339,7 +1398,8 @@ function GroupChat() {
                         <div
                           className={`${
                             imageMessage ||
-                            videoMessage
+                            videoMessage ||
+                            locationMessage
                               ? "relative"
                               : `px-4 py-2 rounded-2xl ${
                                   isMine
@@ -1451,6 +1511,21 @@ function GroupChat() {
                                 </div>
                               </div>
                             )}
+                          
+                          {locationMessage &&
+                            msg.location && (
+                              <LocationMap
+                                latitude={
+                                  msg.location.latitude
+                                }
+                                longitude={
+                                  msg.location.longitude
+                                }
+                                isLive={
+                                  msg.location.isLive
+                                }
+                              />
+                            )}
 
                           {!imageMessage &&
                             !videoMessage &&
@@ -1547,7 +1622,8 @@ function GroupChat() {
                           )}
 
                           {!imageMessage &&
-                            !videoMessage && (
+                            !videoMessage &&
+                            !locationMessage && (
                               <div
                                 className={`text-xs mt-1 flex items-center justify-end gap-1 ${
                                   isMine
@@ -1802,6 +1878,17 @@ function GroupChat() {
                         className="text-gray-500"
                       />
                       Document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSendLocation}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                    >
+                      <MapPin
+                        size={18}
+                        className="text-gray-500"
+                      />
+                      Location
                     </button>
                   </div>
                 </>

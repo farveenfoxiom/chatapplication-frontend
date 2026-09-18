@@ -13,6 +13,7 @@ import {
   Video,
   Camera,
   Image as ImageIcon,
+  MapPin,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -21,6 +22,7 @@ import { useSelector, useDispatch } from "react-redux";
 import {
   getMessages,
   sendMessage,
+  sendLocationMessage,
   deleteMessage,
   markMessagesAsRead,
   editMessage,
@@ -37,6 +39,7 @@ import {
   setLoading,
   setError,
 } from "../redux/slices/messageSlice";
+import LocationMap from "../components/LocationMap";
 
 import {
   setUserOnline,
@@ -1100,6 +1103,48 @@ function Chat() {
     }
   };
 
+  const handleSendLocation = () => {
+    if(!navigator.geolocation) {
+      alert("Geolocation is not supported by this browser.");
+      return;
+    }
+    setShowAttachMenu(false);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude , longitude } = position.coords;
+          const data = await sendLocationMessage(
+            userId,
+            latitude,
+            longitude,
+            token
+          );
+
+          if (registerMessageId(data.message._id)){
+            dispatch(addMessage(data.message));
+          }
+          isNearBottomRef.current = true;
+          dispatch(setError(""));
+        }catch (error){
+          console.error("Send location error:" , error);
+          dispatch(
+            setError(
+              error.response?.data?.message || "Failed to send locaton"
+            )
+          );
+        }
+      },
+      (error) => {
+        if(error.code === error.PERMISSION_DENIED) {
+          alert("Location permission was denied");
+        }else {
+          alert("Unable to get your location.");
+        }
+      }
+    );
+  };
+
   const handleKeyDown = (e) => {
     if (
       e.key === "Enter" &&
@@ -1328,6 +1373,9 @@ function Chat() {
     );
   };
 
+  const isLocationMessage = (msg) => 
+    msg.messageType === "location";
+
   const getFileUrl = (msg) => {
     return `${API_BASE_URL}${msg.fileUrl}`;
   };
@@ -1465,6 +1513,9 @@ function Chat() {
                 const videoMessage =
                   isVideoMessage(msg);
 
+                const locationMessage = 
+                  isLocationMessage(msg);
+
                 return (
                   <div
                     key={msg._id}
@@ -1514,7 +1565,8 @@ function Chat() {
                       <div
                         className={`${
                           imageMessage ||
-                          videoMessage
+                          videoMessage ||
+                          locationMessage
                             ? "relative"
                             : `max-w-xs md:max-w-md px-4 py-2 rounded-2xl ${
                                 isMine
@@ -1638,7 +1690,14 @@ function Chat() {
                               </div>
                             </div>
                           )}
-
+                        {locationMessage &&
+                          msg.location && (
+                            <LocationMap
+                              latitude={msg.location.latitude}
+                              longitude={msg.location.longitude}
+                              isLive={msg.location.isLive}
+                            />
+                          )}
                         {!imageMessage &&
                           !videoMessage &&
                           msg.messageType ===
@@ -1740,7 +1799,8 @@ function Chat() {
                         )}
 
                         {!imageMessage &&
-                          !videoMessage && (
+                          !videoMessage && 
+                          !locationMessage && (
                             <div
                               className={`text-xs mt-1 flex items-center justify-end gap-1 ${
                                 isMine
@@ -2056,6 +2116,18 @@ function Chat() {
                       />
 
                       Document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSendLocation}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                    >
+                      <MapPin
+                        size={18}
+                        className="text-gray-500"
+                      />
+
+                      Location
                     </button>
                   </div>
                 </>
