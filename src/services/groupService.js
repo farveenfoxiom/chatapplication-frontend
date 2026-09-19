@@ -233,21 +233,25 @@ export const sendGroupLocationMessage = async (
   groupId,
   latitude,
   longitude,
-  token
+  token,
+  isLive = false,
+  liveDurationMinutes = null
 ) => {
   const response = await api.post(
     "/messages/location",
     {
-      group : groupId,
+      group: groupId,
       latitude,
       longitude,
-      isLive : false,
+      isLive,
+      liveDurationMinutes,
     },
     {
-      headers : {
-        Authorization : `Bearer ${token}`,
+      headers: {
+        Authorization: `Bearer ${token}`,
       },
     }
   );
+
   return response.data;
-}
+};

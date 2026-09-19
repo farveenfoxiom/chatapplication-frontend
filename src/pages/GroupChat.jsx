@@ -1,4 +1,3 @@
-
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
   ArrowLeft,
@@ -31,6 +30,8 @@ import {
 } from "../services/groupService";
 import { getUserById } from "../services/userService";
 import LocationMap from "../components/LocationMap";
+import ShareLocationModal from "../components/shareLocationModal";
+import LocationPreviewModal from "../components/LocationPreviewModal";
 import { deleteMessage, editMessage } from "../services/messageService";
 import socket from "../socket/socket";
 import {
@@ -45,7 +46,7 @@ const API_BASE_URL = "http://localhost:5000";
 const MESSAGE_LIMIT = 20;
 
 function GroupChat() {
-  console.log("GROUPCHAT FILE VERSION CHECK — v2");
+  console.log("GROUPCHAT FILE VERSION CHECK — v3");
   const { groupId } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -93,6 +94,13 @@ function GroupChat() {
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const [showClearChatModal, setShowClearChatModal] = useState(false);
   const [clearingChat, setClearingChat] = useState(false);
+  const [showShareLocationModal, setShowShareLocationModal] = useState(false);
+  const [locationPreview, setLocationPreview] = useState(null);
+  const [sendingLocation, setSendingLocation] = useState(false);
+
+  const liveLocationWatchIdRef = useRef(null);
+  const liveLocationMessageIdRef = useRef(null);
+  const liveLocationTimeoutRef = useRef(null);
 
   const messagesContainerRef = useRef(null);
   const messagesContentRef = useRef(null);
@@ -424,11 +432,55 @@ function GroupChat() {
       }
     };
 
+    const handleLocationUpdate = (data) => {
+      const { messageId, latitude, longitude, lastUpdatedAt } = data || {};
+
+      if (!messageId) return;
+
+      setMessages((prev) => {
+        const updatedMessages = prev.map((m) =>
+          m._id === messageId
+            ? {
+                ...m,
+                location: {
+                  ...m.location,
+                  latitude,
+                  longitude,
+                  lastUpdatedAt,
+                },
+              }
+            : m
+        );
+
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+    };
+
+    const handleLocationShareStopped = (data) => {
+      const { messageId } = data || {};
+
+      if (!messageId) return;
+
+      setMessages((prev) => {
+        const updatedMessages = prev.map((m) =>
+          m._id === messageId
+            ? { ...m, location: { ...m.location, isLive: false } }
+            : m
+        );
+
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+    };
+
     socket.on("new_message", handleNewMessage);
     socket.on("message_edited", handleMessageEdited);
     socket.on("message_deleted", handleMessageDeleted);
     socket.on("group_updated", handleGroupUpdated);
     socket.on("member_left", handleMemberLeft);
+    socket.on("location_update", handleLocationUpdate);
+    socket.on("location_share_stopped", handleLocationShareStopped);
 
     return () => {
       socket.off("new_message", handleNewMessage);
@@ -436,6 +488,8 @@ function GroupChat() {
       socket.off("message_deleted", handleMessageDeleted);
       socket.off("group_updated", handleGroupUpdated);
       socket.off("member_left", handleMemberLeft);
+      socket.off("location_update", handleLocationUpdate);
+      socket.off("location_share_stopped", handleLocationShareStopped);
     };
   }, [groupId, token, dispatch]);
 
@@ -497,11 +551,6 @@ function GroupChat() {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-
-        console.log("sentinel intersecting?", entry?.isIntersecting, {
-          hasMore: hasMoreMessagesRef.current,
-          isLoadingOlder: isLoadingOlderMessagesRef.current,
-        });
 
         if (
           entry?.isIntersecting &&
@@ -924,45 +973,63 @@ function GroupChat() {
     }
   };
 
-  const handleSendLocation = () => {
+  const stopLiveLocationTracking = () => {
+    if (liveLocationWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(liveLocationWatchIdRef.current);
+      liveLocationWatchIdRef.current = null;
+    }
+
+    if (liveLocationTimeoutRef.current !== null) {
+      clearTimeout(liveLocationTimeoutRef.current);
+      liveLocationTimeoutRef.current = null;
+    }
+
+    liveLocationMessageIdRef.current = null;
+  };
+
+  const startLiveLocationTracking = (messageId, durationMinutes) => {
+    stopLiveLocationTracking();
+
+    liveLocationMessageIdRef.current = messageId;
+
+    liveLocationWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        if (liveLocationMessageIdRef.current !== messageId) return;
+
+        socket.emit("send_location_update", {
+          messageId,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      (err) => {
+        console.error("watchPosition error:", err);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+
+    liveLocationTimeoutRef.current = setTimeout(() => {
+      socket.emit("stop_location_share", { messageId });
+      stopLiveLocationTracking();
+    }, durationMinutes * 60000);
+  };
+
+  const sendLocationWithOptions = (durationMinutes) => {
+    setShowShareLocationModal(false);
+
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by this browser.");
       return;
     }
 
-    setShowAttachMenu(false);
-
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude, longitude } = position.coords;
-
-          const data = await sendGroupLocationMessage(
-            groupId,
-            latitude,
-            longitude,
-            token
-          );
-
-          setMessages((prev) => {
-            const alreadyExists = prev.some(
-              (m) => m._id === data.message._id
-            );
-
-            if (alreadyExists) return prev;
-
-            const updatedMessages = [...prev, data.message];
-            messagesRef.current = updatedMessages;
-            return updatedMessages;
-          });
-
-          isNearBottomRef.current = true;
-        } catch (err) {
-          console.error("Send location error:", err);
-          setError(
-            err.response?.data?.message || "Failed to send location"
-          );
-        }
+      (position) => {
+        setLocationPreview({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          isLive: Boolean(durationMinutes),
+          durationMinutes,
+        });
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {
@@ -973,6 +1040,76 @@ function GroupChat() {
       }
     );
   };
+
+  const cancelLocationPreview = () => {
+    setLocationPreview(null);
+  };
+
+  const confirmSendLocation = async () => {
+    if (!locationPreview || sendingLocation) return;
+
+    try {
+      setSendingLocation(true);
+
+      const { latitude, longitude, isLive, durationMinutes } =
+        locationPreview;
+
+      const data = await sendGroupLocationMessage(
+        groupId,
+        latitude,
+        longitude,
+        token,
+        isLive,
+        durationMinutes
+      );
+
+      setMessages((prev) => {
+        const alreadyExists = prev.some(
+          (m) => m._id === data.message._id
+        );
+
+        if (alreadyExists) return prev;
+
+        const updatedMessages = [...prev, data.message];
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+
+      isNearBottomRef.current = true;
+
+      if (isLive) {
+        startLiveLocationTracking(data.message._id, durationMinutes);
+      }
+
+      setLocationPreview(null);
+    } catch (err) {
+      console.error("Send location error:", err);
+      setError(
+        err.response?.data?.message || "Failed to send location"
+      );
+    } finally {
+      setSendingLocation(false);
+    }
+  };
+
+  const handleSendLocation = () => {
+    setShowAttachMenu(false);
+    setShowShareLocationModal(true);
+  };
+
+  const handleStopSharingLocation = (messageId) => {
+    socket.emit("stop_location_share", { messageId });
+
+    if (liveLocationMessageIdRef.current === messageId) {
+      stopLiveLocationTracking();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopLiveLocationTracking();
+    };
+  }, []);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1524,6 +1661,13 @@ function GroupChat() {
                                 isLive={
                                   msg.location.isLive
                                 }
+                                expiresAt={
+                                  msg.location.liveExpiresAt
+                                }
+                                isMine={isMine}
+                                onStopSharing={() =>
+                                  handleStopSharingLocation(msg._id)
+                                }
                               />
                             )}
 
@@ -1764,7 +1908,7 @@ function GroupChat() {
               </button>
 
               {showEmojiPicker && (
-                <div className="absolute bottom-14 left-0 z-50">
+                <div className="absolute bottom-14 left-0 z-[2000]">
                   <EmojiPicker
                     onEmojiClick={
                       handleEmojiClick
@@ -1813,13 +1957,13 @@ function GroupChat() {
               {showAttachMenu && (
                 <>
                   <div
-                    className="fixed inset-0 z-40"
+                    className="fixed inset-0 z-[1900]"
                     onClick={() =>
                       setShowAttachMenu(false)
                     }
                   />
 
-                  <div className="absolute bottom-14 left-0 z-50 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
+                  <div className="absolute bottom-14 left-0 z-[2000] w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
                     <button
                       type="button"
                       onClick={() => {
@@ -1947,6 +2091,31 @@ function GroupChat() {
           </div>
         </div>
       </div>
+
+      {showShareLocationModal && (
+        <ShareLocationModal
+          onSelect={sendLocationWithOptions}
+          onClose={() => setShowShareLocationModal(false)}
+        />
+      )}
+      {showShareLocationModal && (
+        <ShareLocationModal
+          onSelect={sendLocationWithOptions}
+          onClose={() => setShowShareLocationModal(false)}
+        />
+      )}
+
+      {locationPreview && (
+        <LocationPreviewModal
+          latitude={locationPreview.latitude}
+          longitude={locationPreview.longitude}
+          isLive={locationPreview.isLive}
+          durationMinutes={locationPreview.durationMinutes}
+          onConfirm={confirmSendLocation}
+          onCancel={cancelLocationPreview}
+          sending={sendingLocation}
+        />
+      )}
 
       {showDeleteModal && (
         <div
@@ -2164,4 +2333,3 @@ function GroupChat() {
 }
 
 export default GroupChat;
-
