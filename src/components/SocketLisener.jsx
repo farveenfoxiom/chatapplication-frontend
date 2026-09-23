@@ -57,16 +57,26 @@ function SocketListener() {
       );
     };
 
+    const handleAudioPlayed = ({ messageId, playedBy}) => {
+      const updates = playedBy
+        ? { playedBy, isRead: true }
+        : { isplayed : true , isRead : true };
+        dispatch(updateMessage({ messageId , updates})
+      );
+    };
+
     socket.on("user_online", handleUserOnline);
     socket.on("user_offline", handleUserOffline);
     socket.on("new_message", handleNewMessage);
     socket.on("message_delivered",handleMessageDelivered);
+    socket.on("audio_marked_played", handleAudioPlayed);
 
     return () => {
       socket.off("user_online", handleUserOnline);
       socket.off("user_offline", handleUserOffline);
       socket.off("new_message", handleNewMessage);
       socket.off("message_delivered",handleMessageDelivered);
+      socket.off("audio_marked_played", handleAudioPlayed);
       disconnectSocket();
     };
   }, [token, dispatch]);

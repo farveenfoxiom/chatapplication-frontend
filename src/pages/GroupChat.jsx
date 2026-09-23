@@ -14,7 +14,9 @@ import {
   Camera,
   Image as ImageIcon,
   MoreVertical,
-  MapPin
+  MapPin,
+  Mic,
+  Check,
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -45,8 +47,213 @@ import {
 const API_BASE_URL = "http://localhost:5000";
 const MESSAGE_LIMIT = 20;
 
+/* -------------------------------------------------------
+   AudioPlayer
+   Same voice-message style used by Chat.jsx, but adapted
+   for group messages. A group member is considered to have
+   played/read the audio when their id exists in playedBy/readBy.
+------------------------------------------------------- */
+const AudioPlayer = ({
+  src,
+  isMine,
+  isRead,
+  isDelivered,
+  isPlayed,
+  messageId,
+  time,
+  senderAvatar,
+  onOpenReadRecipients,
+}) => {
+  const audioRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [played, setPlayed] = useState(isPlayed || false);
+
+  useEffect(() => {
+    setPlayed(isPlayed);
+  }, [isPlayed]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (audio.paused) {
+      audio.play().catch((error) => console.error("Audio play error:", error));
+      setIsPlaying(true);
+
+      if (!isMine && !played) {
+        setPlayed(true);
+        socket.emit("mark_audio_played", { messageId });
+      }
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration || 0);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime);
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+    }
+  };
+
+  const handleSeek = (e) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const newTime = Number(e.target.value);
+    audio.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
+  const formatTime = (seconds) => {
+    if (!seconds || !Number.isFinite(seconds)) return "0:00";
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  };
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  const heights = [
+    12, 20, 14, 28, 16, 24, 10, 18, 22, 14, 26, 12, 18, 24, 16, 22, 14, 20, 26,
+  ];
+
+    return (
+    <div
+      className={`relative flex items-center gap-3 w-[300px] max-w-full p-2.5 rounded-xl ${
+        isMine
+          ? "bg-green-500 text-white rounded-tr-none"
+          : "bg-white text-gray-900 rounded-tl-none shadow-sm"
+      }`}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onEnded={handleEnded}
+      />
+
+      <div className="relative shrink-0">
+        <div className="w-12 h-12 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+          {senderAvatar ? (
+            <img
+              src={senderAvatar}
+              alt="Avatar"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <Users size={22} className="text-gray-500" />
+          )}
+        </div>
+        <div
+          className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white ${
+            played ? "bg-blue-500 text-white" : "bg-green-500 text-white"
+          }`}
+        >
+          <Mic size={11} />
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition ${
+          isMine
+            ? "text-white hover:text-white/80"
+            : "text-gray-600 hover:text-gray-800"
+        }`}
+      >
+        {isPlaying ? (
+          <span className="text-sm font-bold">❚❚</span>
+        ) : (
+          <span className="text-sm font-bold ml-0.5">▶</span>
+        )}
+      </button>
+
+      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+        <div className="relative flex items-center gap-[2px] h-6 group">
+          <input
+            type="range"
+            min="0"
+            max={duration || 0}
+            step="0.01"
+            value={Math.min(currentTime, duration || 0)}
+            onChange={handleSeek}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          />
+          {Array.from({ length: 19 }).map((_, index) => {
+            const barPosition = (index / 19) * 100;
+            const isActive = barPosition <= progress;
+            const heightPx = heights[index % heights.length];
+
+            return (
+              <div
+                key={index}
+                style={{ height: `${heightPx}px` }}
+                className={`w-[3px] rounded-full transition-colors ${
+                  isActive
+                    ? played
+                      ? "bg-blue-300"
+                      : isMine
+                      ? "bg-white"
+                      : "bg-green-600"
+                    : isMine
+                    ? "bg-white/30"
+                    : "bg-gray-300"
+                }`}
+              />
+            );
+          })}
+        </div>
+
+        <div
+          className={`flex items-center justify-between text-[11px] leading-none ${
+            isMine ? "text-white/80" : "text-gray-500"
+          }`}
+        >
+          <span>{formatTime(isPlaying ? currentTime : duration)}</span>
+
+          <div className="flex items-center gap-1">
+            <span>{time}</span>
+            {isMine && (
+              <button
+                type="button"
+                onClick={onOpenReadRecipients}
+                className={`text-xs tracking-[-3px] hover:opacity-80 ${
+                  isRead ? "text-blue-500 font-bold" : "text-white/80"
+                }`}
+                title="Read recipients"
+              >
+                {isDelivered || isRead ? "✓✓" : "✓"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function GroupChat() {
-  console.log("GROUPCHAT FILE VERSION CHECK — v3");
+  console.log("GROUPCHAT FILE VERSION CHECK — audio + read recipients v4");
+
   const { groupId } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -86,6 +293,15 @@ function GroupChat() {
   const recordedChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
 
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [audioRecordingSeconds, setAudioRecordingSeconds] = useState(0);
+
+  const audioMediaRecorderRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioTimerRef = useRef(null);
+  const audioDiscardedRef = useRef(false);
+
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [sending, setSending] = useState(false);
   const [deleteMessageId, setDeleteMessageId] = useState(null);
@@ -97,6 +313,9 @@ function GroupChat() {
   const [showShareLocationModal, setShowShareLocationModal] = useState(false);
   const [locationPreview, setLocationPreview] = useState(null);
   const [sendingLocation, setSendingLocation] = useState(false);
+
+  const [readRecipientsMessage, setReadRecipientsMessage] = useState(null);
+  const [showReadRecipientsModal, setShowReadRecipientsModal] = useState(false);
 
   const liveLocationWatchIdRef = useRef(null);
   const liveLocationMessageIdRef = useRef(null);
@@ -121,6 +340,57 @@ function GroupChat() {
     hasMoreMessagesRef.current = hasMoreMessages;
   }, [hasMoreMessages]);
 
+  const getId = (value) =>
+    value?._id?.toString() || value?.id?.toString() || value?.toString();
+
+  const getReadIds = (msg) =>
+    (msg?.readBy || []).map((item) => getId(item)).filter(Boolean);
+
+  const getPlayedIds = (msg) =>
+    (msg?.playedBy || []).map((item) => getId(item)).filter(Boolean);
+
+  const getReadRecipients = (msg) => {
+    if (!group?.members?.length) return [];
+
+    const readIds = new Set(getReadIds(msg));
+
+    return group.members.filter((member) => {
+      const memberId = getId(member);
+      return memberId && readIds.has(memberId);
+    });
+  };
+
+  const hasOtherReaders = (msg) =>
+    getReadRecipients(msg).some(
+      (member) => getId(member) !== currentUserId
+    );
+
+  const openReadRecipients = (msg) => {
+    if (!msg || !currentUserId) return;
+    setReadRecipientsMessage(msg);
+    setShowReadRecipientsModal(true);
+  };
+
+  const closeReadRecipients = () => {
+    setReadRecipientsMessage(null);
+    setShowReadRecipientsModal(false);
+  };
+
+  const addCurrentUserToReadBy = (msg) => {
+    if (!currentUserId || !msg) return msg;
+
+    const currentReadIds = getReadIds(msg);
+
+    if (currentReadIds.includes(currentUserId)) {
+      return msg;
+    }
+
+    return {
+      ...msg,
+      readBy: [...(msg.readBy || []), currentUserId],
+    };
+  };
+
   const scrollToBottom = (smooth = true) => {
     isNearBottomRef.current = true;
 
@@ -141,15 +411,12 @@ function GroupChat() {
     }
 
     const container = messagesContainerRef.current;
-
     if (!container) return;
 
     const currentMessages = messagesRef.current;
-
     if (!currentMessages.length) return;
 
     const oldestMessage = currentMessages[0];
-
     if (!oldestMessage?.createdAt) return;
 
     try {
@@ -167,56 +434,38 @@ function GroupChat() {
       );
 
       const olderMessages = messageData.messages || [];
-
       const nextHasMore =
         messageData.hasMore ?? olderMessages.length === MESSAGE_LIMIT;
 
       setHasMoreMessages(nextHasMore);
       hasMoreMessagesRef.current = nextHasMore;
 
-      if (!olderMessages.length) {
-        return;
-      }
+      if (!olderMessages.length) return;
 
       setMessages((prev) => {
-        const existingIds = new Set(
-          prev.map((item) => item._id)
-        );
-
+        const existingIds = new Set(prev.map((item) => item._id));
         const uniqueOlderMessages = olderMessages.filter(
           (item) => !existingIds.has(item._id)
         );
 
-        if (!uniqueOlderMessages.length) {
-          return prev;
-        }
+        if (!uniqueOlderMessages.length) return prev;
 
-        const updatedMessages = [
-          ...uniqueOlderMessages,
-          ...prev,
-        ];
-
+        const updatedMessages = [...uniqueOlderMessages, ...prev];
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
 
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const newScrollHeight = container.scrollHeight;
-
           container.scrollTop =
-            newScrollHeight -
-            oldScrollHeight +
-            oldScrollTop;
+            newScrollHeight - oldScrollHeight + oldScrollTop;
         });
       });
     } catch (err) {
       console.error("Load older group messages error:", err);
-
       setError(
-        err.response?.data?.message ||
-          "Failed to load older messages"
+        err.response?.data?.message || "Failed to load older messages"
       );
     } finally {
       isLoadingOlderMessagesRef.current = false;
@@ -226,12 +475,7 @@ function GroupChat() {
 
   const handleScroll = (e) => {
     const container = e.currentTarget;
-
-    const {
-      scrollTop,
-      scrollHeight,
-      clientHeight,
-    } = container;
+    const { scrollTop, scrollHeight, clientHeight } = container;
 
     const distanceFromBottom =
       scrollHeight - scrollTop - clientHeight;
@@ -239,7 +483,6 @@ function GroupChat() {
     const isAtBottom = distanceFromBottom < 100;
 
     isNearBottomRef.current = isAtBottom;
-
     setShowScrollButton(!isAtBottom);
   };
 
@@ -278,14 +521,21 @@ function GroupChat() {
 
         if (!isMounted) return;
 
-        const initialMessages = messageData.messages || [];
+        const initialMessages = (messageData.messages || []).map((msg) => {
+          const senderId = getId(msg.sender);
+
+          if (senderId !== currentUserId) {
+            return addCurrentUserToReadBy(msg);
+          }
+
+          return msg;
+        });
 
         messagesRef.current = initialMessages;
         setMessages(initialMessages);
 
         const nextHasMore =
-          messageData.hasMore ??
-          initialMessages.length === MESSAGE_LIMIT;
+          messageData.hasMore ?? initialMessages.length === MESSAGE_LIMIT;
 
         setHasMoreMessages(nextHasMore);
         hasMoreMessagesRef.current = nextHasMore;
@@ -295,15 +545,11 @@ function GroupChat() {
         if (!isMounted) return;
 
         console.error("Failed to load group chat:", err);
-
         setError(
-          err.response?.data?.message ||
-            "Failed to load group chat"
+          err.response?.data?.message || "Failed to load group chat"
         );
       } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        if (isMounted) setLoading(false);
       }
     };
 
@@ -314,12 +560,11 @@ function GroupChat() {
     return () => {
       isMounted = false;
     };
-  }, [groupId, token, dispatch]);
+  }, [groupId, token, dispatch, currentUserId]);
 
   useEffect(() => {
     const handleNewMessage = async (data) => {
       const newMessage = data?.message;
-
       if (!newMessage) return;
 
       const messageGroupId =
@@ -330,23 +575,31 @@ function GroupChat() {
 
       let messageWithSender = newMessage;
 
-      const senderId =
-        newMessage.sender?._id?.toString() ||
-        newMessage.sender?.toString();
-
+      const senderId = getId(newMessage.sender);
       const senderName = newMessage.sender?.name;
 
       if (senderId && !senderName) {
         try {
-          const data = await getUserById(senderId, token);
-          const user = data.user || data;
+          const userData = await getUserById(senderId, token);
+          const user = userData.user || userData;
 
           messageWithSender = {
             ...newMessage,
             sender: user,
           };
-        } catch (error) {
-          console.error("Failed to fetch sender:", error);
+        } catch (err) {
+          console.error("Failed to fetch sender:", err);
+        }
+      }
+
+      if (senderId !== currentUserId) {
+        messageWithSender = addCurrentUserToReadBy(messageWithSender);
+
+        try {
+          await markGroupMessagesAsRead(groupId, token);
+          dispatch(clearGroupUnread(groupId));
+        } catch (err) {
+          console.error("Failed to mark realtime group message as read:", err);
         }
       }
 
@@ -355,29 +608,20 @@ function GroupChat() {
           (m) => m._id === messageWithSender._id
         );
 
-        if (alreadyExists) {
-          return prev;
-        }
+        if (alreadyExists) return prev;
 
-        const updatedMessages = [
-          ...prev,
-          messageWithSender,
-        ];
-
+        const updatedMessages = [...prev, messageWithSender];
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
     };
 
     const handleMessageEdited = (data) => {
       const updated = data?.message;
-
       if (!updated) return;
 
       const messageGroupId =
-        updated.group?._id?.toString() ||
-        updated.group?.toString();
+        updated.group?._id?.toString() || updated.group?.toString();
 
       if (messageGroupId !== groupId) return;
 
@@ -387,14 +631,12 @@ function GroupChat() {
         );
 
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
     };
 
     const handleMessageDeleted = (data) => {
       const messageId = data?.messageId;
-
       if (!messageId) return;
 
       setMessages((prev) => {
@@ -403,7 +645,6 @@ function GroupChat() {
         );
 
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
     };
@@ -424,7 +665,7 @@ function GroupChat() {
             ? {
                 ...prev,
                 members: prev.members.filter(
-                  (m) => (m._id || m) !== data.userId
+                  (m) => getId(m) !== data.userId?.toString()
                 ),
               }
             : prev
@@ -432,9 +673,76 @@ function GroupChat() {
       }
     };
 
+    const handleAudioMarkedPlayed = (data) => {
+      const { messageId, playedBy, userId } = data || {};
+      if (!messageId) return;
+
+      setMessages((prev) => {
+        const updatedMessages = prev.map((msg) => {
+          if (msg._id?.toString() !== messageId.toString()) {
+            return msg;
+          }
+
+          const existingPlayedIds = getPlayedIds(msg);
+          const existingReadIds = getReadIds(msg);
+          const nextPlayedIds = playedBy?.length
+            ? playedBy.map((id) => getId(id)).filter(Boolean)
+            : userId
+            ? Array.from(
+                new Set([...existingPlayedIds, userId.toString()])
+              )
+            : existingPlayedIds;
+
+          const nextReadIds = userId
+            ? Array.from(
+                new Set([...existingReadIds, userId.toString()])
+              )
+            : existingReadIds;
+
+          return {
+            ...msg,
+            playedBy: nextPlayedIds,
+            readBy: nextReadIds,
+            isPlayed:
+              userId?.toString() === currentUserId
+                ? true
+                : msg.isPlayed,
+          };
+        });
+
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+    };
+
+    const handleGroupMessagesRead = (data) => {
+      const eventGroupId = data?.groupId?.toString();
+      const userId = data?.userId?.toString();
+
+      if (eventGroupId !== groupId || !userId) return;
+
+      setMessages((prev) => {
+        const updatedMessages = prev.map((msg) => {
+          const senderId = getId(msg.sender);
+
+          if (senderId === userId || !senderId) return msg;
+          if (senderId !== currentUserId) return msg;
+
+          return {
+            ...msg,
+            readBy: Array.from(
+              new Set([...getReadIds(msg), userId])
+            ),
+          };
+        });
+
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+    };
+
     const handleLocationUpdate = (data) => {
       const { messageId, latitude, longitude, lastUpdatedAt } = data || {};
-
       if (!messageId) return;
 
       setMessages((prev) => {
@@ -459,13 +767,18 @@ function GroupChat() {
 
     const handleLocationShareStopped = (data) => {
       const { messageId } = data || {};
-
       if (!messageId) return;
 
       setMessages((prev) => {
         const updatedMessages = prev.map((m) =>
           m._id === messageId
-            ? { ...m, location: { ...m.location, isLive: false } }
+            ? {
+                ...m,
+                location: {
+                  ...m.location,
+                  isLive: false,
+                },
+              }
             : m
         );
 
@@ -479,6 +792,8 @@ function GroupChat() {
     socket.on("message_deleted", handleMessageDeleted);
     socket.on("group_updated", handleGroupUpdated);
     socket.on("member_left", handleMemberLeft);
+    socket.on("audio_marked_played", handleAudioMarkedPlayed);
+    socket.on("group_messages_read", handleGroupMessagesRead);
     socket.on("location_update", handleLocationUpdate);
     socket.on("location_share_stopped", handleLocationShareStopped);
 
@@ -488,10 +803,12 @@ function GroupChat() {
       socket.off("message_deleted", handleMessageDeleted);
       socket.off("group_updated", handleGroupUpdated);
       socket.off("member_left", handleMemberLeft);
+      socket.off("audio_marked_played", handleAudioMarkedPlayed);
+      socket.off("group_messages_read", handleGroupMessagesRead);
       socket.off("location_update", handleLocationUpdate);
       socket.off("location_share_stopped", handleLocationShareStopped);
     };
-  }, [groupId, token, dispatch]);
+  }, [groupId, token, dispatch, currentUserId]);
 
   useEffect(() => {
     if (!messages.length) {
@@ -572,7 +889,6 @@ function GroupChat() {
     if (loading) return;
 
     const container = messagesContainerRef.current;
-
     if (!container) return;
 
     const needsMore =
@@ -587,18 +903,23 @@ function GroupChat() {
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
-
     if (!file) return;
 
     const isVideo = file.type.startsWith("video/");
+    const isAudio = file.type.startsWith("audio/");
+
     const maxSize = isVideo
       ? 50 * 1024 * 1024
+      : isAudio
+      ? 10 * 1024 * 1024
       : 5 * 1024 * 1024;
 
     if (file.size > maxSize) {
       setError(
         isVideo
           ? "Video must be less than 50 MB"
+          : isAudio
+          ? "Audio must be less than 10 MB"
           : "File size must be less than 5 MB"
       );
 
@@ -631,7 +952,6 @@ function GroupChat() {
     }
 
     const previewUrl = URL.createObjectURL(selectedFile);
-
     setSelectedFilePreview(previewUrl);
 
     return () => URL.revokeObjectURL(previewUrl);
@@ -649,15 +969,14 @@ function GroupChat() {
         return;
       }
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: mode === "video",
-        });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: mode === "video",
+      });
 
       cameraStreamRef.current = stream;
       setCameraMode(mode);
@@ -666,15 +985,11 @@ function GroupChat() {
       console.error("Camera access error:", err);
 
       if (err.name === "NotAllowedError") {
-        alert(
-          "Camera permission was denied. Please allow camera access."
-        );
+        alert("Camera permission was denied. Please allow camera access.");
       } else if (err.name === "NotFoundError") {
         alert("No camera was found on this device.");
       } else if (err.name === "NotReadableError") {
-        alert(
-          "Camera is already being used by another application."
-        );
+        alert("Camera is already being used by another application.");
       } else {
         alert("Unable to access camera.");
       }
@@ -758,14 +1073,11 @@ function GroupChat() {
     }
 
     if (typeof MediaRecorder === "undefined") {
-      alert(
-        "Video recording is not supported by this browser."
-      );
+      alert("Video recording is not supported by this browser.");
       return;
     }
 
     const mimeType = pickSupportedMimeType();
-
     recordedChunksRef.current = [];
 
     const recorder = mimeType
@@ -793,20 +1105,14 @@ function GroupChat() {
         .split(";")[0]
         .trim();
 
-      const blob = new Blob(chunks, {
-        type: baseType,
-      });
+      const blob = new Blob(chunks, { type: baseType });
 
-      const extension = baseType.includes("mp4")
-        ? "mp4"
-        : "webm";
+      const extension = baseType.includes("mp4") ? "mp4" : "webm";
 
       const file = new File(
         [blob],
         `video-${Date.now()}.${extension}`,
-        {
-          type: baseType,
-        }
+        { type: baseType }
       );
 
       setSelectedFile(file);
@@ -852,9 +1158,7 @@ function GroupChat() {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
 
-    return `${minutes}:${seconds
-      .toString()
-      .padStart(2, "0")}`;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
   const capturePhoto = () => {
@@ -866,7 +1170,6 @@ function GroupChat() {
     }
 
     const canvas = document.createElement("canvas");
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
@@ -887,9 +1190,7 @@ function GroupChat() {
         const file = new File(
           [blob],
           `camera-${Date.now()}.jpg`,
-          {
-            type: "image/jpeg",
-          }
+          { type: "image/jpeg" }
         );
 
         setSelectedFile(file);
@@ -898,6 +1199,214 @@ function GroupChat() {
       "image/jpeg",
       0.9
     );
+  };
+
+  const pickSupportedAudioMimeType = () => {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4",
+    ];
+
+    return (
+      candidates.find(
+        (type) =>
+          typeof MediaRecorder !== "undefined" &&
+          MediaRecorder.isTypeSupported?.(type)
+      ) || ""
+    );
+  };
+
+  const startAudioRecording = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert("Audio recording is not supported by this browser.");
+        return;
+      }
+
+      if (typeof MediaRecorder === "undefined") {
+        alert("Audio recording is not supported by this browser.");
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      audioDiscardedRef.current = false;
+
+      const mimeType = pickSupportedAudioMimeType();
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        if (audioTimerRef.current) {
+          clearInterval(audioTimerRef.current);
+          audioTimerRef.current = null;
+        }
+
+        if (audioStreamRef.current) {
+          audioStreamRef.current
+            .getTracks()
+            .forEach((track) => track.stop());
+          audioStreamRef.current = null;
+        }
+
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+
+        setIsRecordingAudio(false);
+        setAudioRecordingSeconds(0);
+
+        if (audioDiscardedRef.current || !chunks.length) {
+          return;
+        }
+
+        const baseType = (mimeType || "audio/webm")
+          .split(";")[0]
+          .trim();
+
+        const blob = new Blob(chunks, { type: baseType });
+
+        const extension = baseType.includes("ogg")
+          ? "ogg"
+          : baseType.includes("mp4")
+          ? "m4a"
+          : "webm";
+
+        const file = new File(
+          [blob],
+          `voice-${Date.now()}.${extension}`,
+          { type: baseType }
+        );
+
+        sendGroupAudioMessage(file);
+      };
+
+      recorder.start();
+      audioMediaRecorderRef.current = recorder;
+
+      setIsRecordingAudio(true);
+      setAudioRecordingSeconds(0);
+
+      audioTimerRef.current = setInterval(() => {
+        setAudioRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Audio recording error:", err);
+
+      if (err.name === "NotAllowedError") {
+        alert("Microphone permission was denied.");
+      } else if (err.name === "NotFoundError") {
+        alert("No microphone was found.");
+      } else {
+        alert("Unable to access microphone.");
+      }
+    }
+  };
+
+  const stopAudioRecording = () => {
+    if (
+      audioMediaRecorderRef.current &&
+      audioMediaRecorderRef.current.state !== "inactive"
+    ) {
+      audioMediaRecorderRef.current.stop();
+    }
+  };
+
+  const discardAudioRecording = () => {
+    audioDiscardedRef.current = true;
+    if (audioMediaRecorderRef.current?.state !== "inactive") {
+      audioMediaRecorderRef.current.stop();
+    }
+  };
+
+  const confirmAudioRecording = () => {
+    audioDiscardedRef.current = false;
+    if(audioMediaRecorderRef.current?.state !== "inactive") {
+      audioMediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelAudioRecording = () => {
+    audioDiscardedRef.current = true;
+
+    if (
+      audioMediaRecorderRef.current &&
+      audioMediaRecorderRef.current.state !== "inactive"
+    ) {
+      audioMediaRecorderRef.current.stop();
+    }
+
+    if (audioTimerRef.current) {
+      clearInterval(audioTimerRef.current);
+      audioTimerRef.current = null;
+    }
+
+    if (audioStreamRef.current) {
+      audioStreamRef.current
+        .getTracks()
+        .forEach((track) => track.stop());
+      audioStreamRef.current = null;
+    }
+
+    audioChunksRef.current = [];
+    setIsRecordingAudio(false);
+    setAudioRecordingSeconds(0);
+  };
+
+  const formatAudioRecordingTime = (totalSeconds) => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const sendGroupAudioMessage = async (file) => {
+    try {
+      setSending(true);
+      setError("");
+
+      const data = await sendGroupMessage(
+        groupId,
+        "",
+        token,
+        file
+      );
+
+      setMessages((prev) => {
+        const alreadyExists = prev.some(
+          (m) => m._id === data.message._id
+        );
+
+        if (alreadyExists) return prev;
+
+        const updatedMessages = [...prev, data.message];
+        messagesRef.current = updatedMessages;
+        return updatedMessages;
+      });
+
+      isNearBottomRef.current = true;
+    } catch (err) {
+      console.error("Send group audio error:", err);
+      setError(
+        err.response?.data?.message ||
+          "Failed to send voice message"
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   useEffect(() => {
@@ -913,10 +1422,27 @@ function GroupChat() {
         clearInterval(recordingTimerRef.current);
       }
 
-      const stream = cameraStreamRef.current;
+      const cameraStream = cameraStreamRef.current;
 
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
+
+      if (
+        audioMediaRecorderRef.current &&
+        audioMediaRecorderRef.current.state !== "inactive"
+      ) {
+        audioMediaRecorderRef.current.stop();
+      }
+
+      if (audioTimerRef.current) {
+        clearInterval(audioTimerRef.current);
+      }
+
+      const audioStream = audioStreamRef.current;
+
+      if (audioStream) {
+        audioStream.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
@@ -941,22 +1467,14 @@ function GroupChat() {
           (m) => m._id === data.message._id
         );
 
-        if (alreadyExists) {
-          return prev;
-        }
+        if (alreadyExists) return prev;
 
-        const updatedMessages = [
-          ...prev,
-          data.message,
-        ];
-
+        const updatedMessages = [...prev, data.message];
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
 
       isNearBottomRef.current = true;
-
       setMessage("");
       setSelectedFile(null);
       setSelectedFilePreview(null);
@@ -965,8 +1483,7 @@ function GroupChat() {
       console.error("Send group message error:", err);
 
       setError(
-        err.response?.data?.message ||
-          "Failed to send message"
+        err.response?.data?.message || "Failed to send message"
       );
     } finally {
       setSending(false);
@@ -1002,10 +1519,12 @@ function GroupChat() {
           longitude: position.coords.longitude,
         });
       },
-      (err) => {
-        console.error("watchPosition error:", err);
-      },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      (err) => console.error("watchPosition error:", err),
+      {
+        enableHighAccuracy: true,
+        maximumAge: 5000,
+        timeout: 15000,
+      }
     );
 
     liveLocationTimeoutRef.current = setTimeout(() => {
@@ -1078,7 +1597,10 @@ function GroupChat() {
       isNearBottomRef.current = true;
 
       if (isLive) {
-        startLiveLocationTracking(data.message._id, durationMinutes);
+        startLiveLocationTracking(
+          data.message._id,
+          durationMinutes
+        );
       }
 
       setLocationPreview(null);
@@ -1106,9 +1628,7 @@ function GroupChat() {
   };
 
   useEffect(() => {
-    return () => {
-      stopLiveLocationTracking();
-    };
+    return () => stopLiveLocationTracking();
   }, []);
 
   const handleKeyDown = (e) => {
@@ -1132,11 +1652,7 @@ function GroupChat() {
     if (!deleteMessageId) return;
 
     try {
-      await deleteMessage(
-        deleteMessageId,
-        deleteFor,
-        token
-      );
+      await deleteMessage(deleteMessageId, deleteFor, token);
 
       setMessages((prev) => {
         const updatedMessages = prev.filter(
@@ -1144,7 +1660,6 @@ function GroupChat() {
         );
 
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
 
@@ -1155,8 +1670,7 @@ function GroupChat() {
       console.error("Delete message error:", err);
 
       setError(
-        err.response?.data?.message ||
-          "Failed to delete message"
+        err.response?.data?.message || "Failed to delete message"
       );
     }
   };
@@ -1186,7 +1700,6 @@ function GroupChat() {
         );
 
         messagesRef.current = updatedMessages;
-
         return updatedMessages;
       });
 
@@ -1197,8 +1710,7 @@ function GroupChat() {
       console.error("Edit message error:", err);
 
       setError(
-        err.response?.data?.message ||
-          "Failed to edit message"
+        err.response?.data?.message || "Failed to edit message"
       );
     }
   };
@@ -1223,15 +1735,12 @@ function GroupChat() {
       setShowClearChatModal(false);
       setShowGroupMenu(false);
 
-      requestAnimationFrame(() => {
-        scrollToBottom(false);
-      });
+      requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
       console.error("Clear group chat error:", err);
 
       setError(
-        err.response?.data?.message ||
-          "Failed to clear chat"
+        err.response?.data?.message || "Failed to clear chat"
       );
     } finally {
       setClearingChat(false);
@@ -1250,20 +1759,11 @@ function GroupChat() {
     setMessage("");
   };
 
-  const downloadFile = async (
-    fileUrl,
-    fileName,
-    messageId
-  ) => {
+  const downloadFile = async (fileUrl, fileName, messageId) => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}${fileUrl}`
-      );
-
+      const response = await fetch(`${API_BASE_URL}${fileUrl}`);
       const blob = await response.blob();
-
       const url = window.URL.createObjectURL(blob);
-
       const link = document.createElement("a");
 
       link.href = url;
@@ -1288,8 +1788,7 @@ function GroupChat() {
   const isImageMessage = (msg) => {
     if (msg.messageType === "image") return true;
 
-    const fileName =
-      msg.fileName?.toLowerCase() || "";
+    const fileName = msg.fileName?.toLowerCase() || "";
 
     return [
       ".jpg",
@@ -1300,11 +1799,26 @@ function GroupChat() {
     ].some((ext) => fileName.endsWith(ext));
   };
 
+  const isAudioMessage = (msg) => {
+    if (msg.messageType === "audio") return true;
+
+    const fileName = msg.fileName?.toLowerCase() || "";
+
+    return [
+      ".mp3",
+      ".wav",
+      ".ogg",
+      ".m4a",
+      ".aac",
+      ".webm",
+    ].some((ext) => fileName.endsWith(ext));
+  };
+  
   const isVideoMessage = (msg) => {
+    if(isAudioMessage(msg)) return false;
     if (msg.messageType === "video") return true;
 
-    const fileName =
-      msg.fileName?.toLowerCase() || "";
+    const fileName = msg.fileName?.toLowerCase() || "";
 
     return [
       ".mp4",
@@ -1315,18 +1829,28 @@ function GroupChat() {
     ].some((ext) => fileName.endsWith(ext));
   };
 
-  const isLocationMessage = (msg) => 
+
+  const isLocationMessage = (msg) =>
     msg.messageType === "location";
 
   const getFileUrl = (msg) =>
     `${API_BASE_URL}${msg.fileUrl}`;
 
+  const getMessageTime = (msg) =>
+    new Date(msg.createdAt).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  const getMessageReadCount = (msg) =>
+    getReadRecipients(msg).filter(
+      (member) => getId(member) !== currentUserId
+    ).length;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <p className="text-gray-500">
-          Loading group...
-        </p>
+        <p className="text-gray-500">Loading group...</p>
       </div>
     );
   }
@@ -1335,10 +1859,7 @@ function GroupChat() {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-500 mb-4">
-            Group not found
-          </p>
-
+          <p className="text-red-500 mb-4">Group not found</p>
           <button
             onClick={() => navigate("/")}
             className="text-green-600 font-semibold"
@@ -1363,9 +1884,7 @@ function GroupChat() {
 
         <button
           type="button"
-          onClick={() =>
-            navigate(`/group/${groupId}/info`)
-          }
+          onClick={() => navigate(`/group/${groupId}/info`)}
           className="flex items-center gap-3 text-left flex-1 min-w-0"
         >
           <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
@@ -1376,10 +1895,7 @@ function GroupChat() {
                 className="w-10 h-10 rounded-full object-cover"
               />
             ) : (
-              <Users
-                size={20}
-                className="text-green-600"
-              />
+              <Users size={20} className="text-green-600" />
             )}
           </div>
 
@@ -1387,14 +1903,12 @@ function GroupChat() {
             <h2 className="font-semibold text-gray-900 truncate">
               {group.name}
             </h2>
-
             <p className="text-xs text-gray-500">
               {group.members?.length || 0} members
             </p>
           </div>
         </button>
 
-        {/* GROUP MENU */}
         <div className="relative z-[200] shrink-0">
           <button
             type="button"
@@ -1409,9 +1923,7 @@ function GroupChat() {
           </button>
 
           {showGroupMenu && (
-            <div
-              className="absolute right-0 top-12 z-[9999] w-48 bg-white rounded-xl shadow-2xl border border-gray-200 py-1 overflow-hidden"
-            >
+            <div className="absolute right-0 top-12 z-[9999] w-48 bg-white rounded-xl shadow-2xl border border-gray-200 py-1 overflow-hidden">
               <button
                 type="button"
                 onClick={(e) => {
@@ -1429,6 +1941,7 @@ function GroupChat() {
         </div>
       </header>
 
+      {/* MESSAGES */}
       <div className="relative flex-1 overflow-hidden">
         {loadingOlderMessages && (
           <div className="absolute top-2 left-0 right-0 z-20 flex justify-center pointer-events-none">
@@ -1460,41 +1973,39 @@ function GroupChat() {
               ref={setMessagesContentRef}
               className="space-y-3 max-w-6xl mx-auto w-full"
             >
-              <div
-                ref={topSentinelRef}
-                style={{ height: 1 }}
-              />
+              <div ref={topSentinelRef} style={{ height: 1 }} />
 
               {messages.map((msg) => {
-                const messageSenderId =
-                  msg.sender?._id?.toString() ||
-                  msg.sender?.toString();
+                const messageSenderId = getId(msg.sender);
+                const isMine = messageSenderId === currentUserId;
 
-                const isMine =
-                  messageSenderId === currentUserId;
+                const imageMessage = isImageMessage(msg);
+                const videoMessage = isVideoMessage(msg);
+                const audioMessage = isAudioMessage(msg);
+                const locationMessage = isLocationMessage(msg);
 
-                const imageMessage =
-                  isImageMessage(msg);
+                const senderName = msg.sender?.name || "Unknown";
+                const messageRead = hasOtherReaders(msg);
+                const readCount = getMessageReadCount(msg);
 
-                const locationMessage = 
-                  isLocationMessage(msg);
-
-                const videoMessage =
-                  isVideoMessage(msg);
-
-                const senderName =
-                  msg.sender?.name || "Unknown";
+                const nonBubbleMessage =
+                  imageMessage ||
+                  videoMessage ||
+                  locationMessage ||
+                  audioMessage;
 
                 return (
                   <div
                     key={msg._id}
                     className={`flex ${
-                      isMine
-                        ? "justify-end"
-                        : "justify-start"
+                      isMine ? "justify-end" : "justify-start"
                     }`}
                   >
-                    <div className="group flex flex-col items-start gap-1 max-w-xs md:max-w-md">
+                    <div
+                      className={`group flex flex-col gap-1 max-w-xs md:max-w-md ${
+                        isMine ? "items-end" : "items-start"
+                      }`}
+                    >
                       {!isMine && (
                         <span className="text-xs font-medium text-gray-500 px-1">
                           {senderName}
@@ -1503,28 +2014,20 @@ function GroupChat() {
 
                       <div className="flex items-end gap-2">
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity order-2">
-                          {isMine &&
-                            msg.messageType ===
-                              "text" && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  startEditingMessage(msg)
-                                }
-                                title="Edit message"
-                                className="text-gray-400 hover:text-green-500 p-1"
-                              >
-                                <Pencil size={16} />
-                              </button>
-                            )}
+                          {isMine && msg.messageType === "text" && (
+                            <button
+                              type="button"
+                              onClick={() => startEditingMessage(msg)}
+                              title="Edit message"
+                              className="text-gray-400 hover:text-green-500 p-1"
+                            >
+                              <Pencil size={16} />
+                            </button>
+                          )}
 
                           <button
                             type="button"
-                            onClick={() =>
-                              handleDeleteMessage(
-                                msg._id
-                              )
-                            }
+                            onClick={() => handleDeleteMessage(msg._id)}
                             title="Delete message"
                             className="text-gray-400 hover:text-red-500 p-1"
                           >
@@ -1533,160 +2036,179 @@ function GroupChat() {
                         </div>
 
                         <div
-                          className={`${
-                            imageMessage ||
-                            videoMessage ||
-                            locationMessage
+                          className={
+                            nonBubbleMessage
                               ? "relative"
-                              : `px-4 py-2 rounded-2xl ${
+                              : `max-w-xs md:max-w-md px-3 py-2 rounded-2xl shadow-sm ${
                                   isMine
-                                    ? "bg-green-500 text-white rounded-br-md"
-                                    : "bg-white text-gray-800 rounded-bl-md"
+                                    ? "bg-green-500 text-white rounded-tr-none"
+                                    : "bg-white text-gray-800 rounded-tl-none"
                                 }`
-                          }`}
+                          }
                         >
-                          {videoMessage &&
-                            msg.fileUrl && (
-                              <div className="relative">
-                                <video
-                                  src={getFileUrl(msg)}
-                                  controls
-                                  preload="metadata"
-                                  className="max-w-xs md:max-w-sm max-h-80 rounded-2xl bg-black"
-                                />
+                          {/* AUDIO */}
+                          {audioMessage && msg.fileUrl && (
+                            <AudioPlayer
+                              src={getFileUrl(msg)}
+                              isMine={isMine}
+                              isRead={messageRead}
+                              isDelivered={
+                                msg.isDelivered || messageRead
+                              }
+                              isPlayed={
+                                getPlayedIds(msg).includes(
+                                  currentUserId
+                                )
+                              }
+                              messageId={msg._id}
+                              time={getMessageTime(msg)}
+                              onOpenReadRecipients={() =>
+                                openReadRecipients(msg)
+                              }
+                            />
+                          )}
 
-                                <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                                  <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-                                    {new Date(
-                                      msg.createdAt
-                                    ).toLocaleTimeString(
-                                      [],
-                                      {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
+                          {/* VIDEO */}
+                          {videoMessage && msg.fileUrl && (
+                            <div className="relative">
+                              <video
+                                src={getFileUrl(msg)}
+                                controls
+                                preload="metadata"
+                                className="max-w-xs md:max-w-sm max-h-80 rounded-2xl bg-black"
+                              />
+
+                              <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                                <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
+                                  {getMessageTime(msg)}
+                                </span>
+
+                                {isMine && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openReadRecipients(msg)}
+                                    className={`bg-black/50 text-xs px-1 rounded-full tracking-[-3px] ${
+                                      messageRead
+                                        ? "text-blue-400 font-bold"
+                                        : "text-white"
+                                    }`}
+                                    title="Read recipients"
+                                  >
+                                    {msg.isDelivered || messageRead
+                                      ? "✓✓"
+                                      : "✓"}
+                                  </button>
+                                )}
+
+                                {!isMine &&
+                                  !downloadedMessageIds.has(msg._id) && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        downloadFile(
+                                          msg.fileUrl,
+                                          msg.fileName,
+                                          msg._id
+                                        )
                                       }
-                                    )}
-                                  </span>
-
-                                  {!isMine &&
-                                    !downloadedMessageIds.has(
-                                      msg._id
-                                    ) && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          downloadFile(
-                                            msg.fileUrl,
-                                            msg.fileName,
-                                            msg._id
-                                          )
-                                        }
-                                        title="Download video"
-                                        className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
-                                      >
-                                        <Download
-                                          size={16}
-                                        />
-                                      </button>
-                                    )}
-                                </div>
+                                      title="Download video"
+                                      className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
+                                    >
+                                      <Download size={16} />
+                                    </button>
+                                  )}
                               </div>
-                            )}
+                            </div>
+                          )}
 
-                          {imageMessage &&
-                            msg.fileUrl && (
-                              <div className="relative">
-                                <img
-                                  src={getFileUrl(msg)}
-                                  alt={
-                                    msg.fileName ||
-                                    "Image"
-                                  }
-                                  className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
-                                  onClick={() =>
-                                    window.open(
-                                      getFileUrl(msg),
-                                      "_blank"
-                                    )
-                                  }
-                                />
-
-                                <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                                  <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-                                    {new Date(
-                                      msg.createdAt
-                                    ).toLocaleTimeString(
-                                      [],
-                                      {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      }
-                                    )}
-                                  </span>
-
-                                  {!isMine &&
-                                    !downloadedMessageIds.has(
-                                      msg._id
-                                    ) && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          downloadFile(
-                                            msg.fileUrl,
-                                            msg.fileName,
-                                            msg._id
-                                          )
-                                        }
-                                        title="Download image"
-                                        className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
-                                      >
-                                        <Download
-                                          size={16}
-                                        />
-                                      </button>
-                                    )}
-                                </div>
-                              </div>
-                            )}
-                          
-                          {locationMessage &&
-                            msg.location && (
-                              <LocationMap
-                                latitude={
-                                  msg.location.latitude
-                                }
-                                longitude={
-                                  msg.location.longitude
-                                }
-                                isLive={
-                                  msg.location.isLive
-                                }
-                                expiresAt={
-                                  msg.location.liveExpiresAt
-                                }
-                                isMine={isMine}
-                                onStopSharing={() =>
-                                  handleStopSharingLocation(msg._id)
+                          {/* IMAGE */}
+                          {imageMessage && msg.fileUrl && (
+                            <div className="relative">
+                              <img
+                                src={getFileUrl(msg)}
+                                alt={msg.fileName || "Image"}
+                                className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
+                                onClick={() =>
+                                  window.open(
+                                    getFileUrl(msg),
+                                    "_blank"
+                                  )
                                 }
                               />
-                            )}
 
+                              <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                                <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
+                                  {getMessageTime(msg)}
+                                </span>
+
+                                {isMine && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openReadRecipients(msg)}
+                                    className={`bg-black/50 text-xs px-1 rounded-full tracking-[-3px] ${
+                                      messageRead
+                                        ? "text-blue-400 font-bold"
+                                        : "text-white"
+                                    }`}
+                                    title="Read recipients"
+                                  >
+                                    {msg.isDelivered || messageRead
+                                      ? "✓✓"
+                                      : "✓"}
+                                  </button>
+                                )}
+
+                                {!isMine &&
+                                  !downloadedMessageIds.has(msg._id) && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        downloadFile(
+                                          msg.fileUrl,
+                                          msg.fileName,
+                                          msg._id
+                                        )
+                                      }
+                                      title="Download image"
+                                      className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
+                                    >
+                                      <Download size={16} />
+                                    </button>
+                                  )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* LOCATION */}
+                          {locationMessage && msg.location && (
+                            <LocationMap
+                              latitude={msg.location.latitude}
+                              longitude={msg.location.longitude}
+                              isLive={msg.location.isLive}
+                              expiresAt={msg.location.liveExpiresAt}
+                              isMine={isMine}
+                              onStopSharing={() =>
+                                handleStopSharingLocation(msg._id)
+                              }
+                              time={getMessageTime(msg)}
+                            />
+                          )}
+
+                          {/* FILE */}
                           {!imageMessage &&
                             !videoMessage &&
-                            msg.messageType ===
-                              "file" &&
+                            !audioMessage &&
+                            !locationMessage &&
+                            msg.messageType === "file" &&
                             msg.fileUrl && (
                               <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600">
-                                  <FileText
-                                    size={20}
-                                  />
+                                  <FileText size={20} />
                                 </div>
 
                                 <div className="min-w-0 flex-1">
                                   <p className="font-medium text-sm truncate">
-                                    {msg.fileName ||
-                                      "File"}
+                                    {msg.fileName || "File"}
                                   </p>
 
                                   {msg.fileSize && (
@@ -1697,23 +2219,14 @@ function GroupChat() {
                                           : "text-gray-500"
                                       }`}
                                     >
-                                      {(
-                                        msg.fileSize /
-                                        1024
-                                      ).toFixed(1)}{" "}
-                                      KB
+                                      {(msg.fileSize / 1024).toFixed(1)} KB
                                     </p>
                                   )}
                                 </div>
 
                                 {!isMine &&
-                                  (downloadedMessageIds.has(
-                                    msg._id
-                                  ) ? (
-                                    <span
-                                      className="text-xs text-gray-400 shrink-0"
-                                      title="Already downloaded"
-                                    >
+                                  (downloadedMessageIds.has(msg._id) ? (
+                                    <span className="text-xs text-gray-400 shrink-0">
                                       Downloaded
                                     </span>
                                   ) : (
@@ -1729,24 +2242,19 @@ function GroupChat() {
                                       title="Download file"
                                       className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 hover:bg-gray-300"
                                     >
-                                      <Download
-                                        size={18}
-                                      />
+                                      <Download size={18} />
                                     </button>
                                   ))}
                               </div>
                             )}
 
-                          {msg.messageType ===
-                            "text" &&
-                            msg.text && (
-                              <p className="break-words">
-                                {msg.text}
-                              </p>
-                            )}
+                          {/* TEXT */}
+                          {msg.messageType === "text" && msg.text && (
+                            <p className="break-words">{msg.text}</p>
+                          )}
 
-                          {msg.messageType !==
-                            "text" &&
+                          {msg.messageType !== "text" &&
+                            !audioMessage &&
                             msg.text && (
                               <p className="break-words mt-2">
                                 {msg.text}
@@ -1765,31 +2273,47 @@ function GroupChat() {
                             </p>
                           )}
 
-                          {!imageMessage &&
-                            !videoMessage &&
-                            !locationMessage && (
-                              <div
-                                className={`text-xs mt-1 flex items-center justify-end gap-1 ${
-                                  isMine
-                                    ? "text-green-100"
-                                    : "text-gray-400"
-                                }`}
-                              >
-                                <span>
-                                  {new Date(
-                                    msg.createdAt
-                                  ).toLocaleTimeString(
-                                    [],
-                                    {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    }
-                                  )}
-                                </span>
-                              </div>
-                            )}
+                          {!nonBubbleMessage && (
+                            <div
+                              className={`text-xs mt-1 flex items-center justify-end gap-1 ${
+                                isMine
+                                  ? "text-green-100"
+                                  : "text-gray-400"
+                              }`}
+                            >
+                              <span>{getMessageTime(msg)}</span>
+
+                              {isMine && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReadRecipients(msg)}
+                                  className={`tracking-[-3px] hover:opacity-80 ${
+                                    messageRead
+                                      ? "text-blue-500 font-bold"
+                                      : "text-green-100"
+                                  }`}
+                                  title="Read recipients"
+                                >
+                                  {msg.isDelivered || messageRead
+                                    ? "✓✓"
+                                    : "✓"}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
+                        
                       </div>
+
+                      {isMine && readCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => openReadRecipients(msg)}
+                          className="self-end text-[10px] text-gray-400 hover:text-green-600 px-1"
+                        >
+                          Read by {readCount}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1812,13 +2336,12 @@ function GroupChat() {
         )}
       </div>
 
+      {/* COMPOSER */}
       <div className="bg-white border-t border-gray-200 p-3">
         <div className="max-w-3xl mx-auto">
           {selectedFile && (
             <div className="mb-2 bg-gray-100 rounded-xl p-3">
-              {selectedFile.type.startsWith(
-                "image/"
-              ) ? (
+              {selectedFile.type.startsWith("image/") ? (
                 <div className="relative w-fit">
                   {selectedFilePreview && (
                     <img
@@ -1837,9 +2360,7 @@ function GroupChat() {
                     <X size={18} />
                   </button>
                 </div>
-              ) : selectedFile.type.startsWith(
-                  "video/"
-                ) ? (
+              ) : selectedFile.type.startsWith("video/") ? (
                 <div className="relative w-fit">
                   {selectedFilePreview && (
                     <video
@@ -1872,10 +2393,7 @@ function GroupChat() {
                       </p>
 
                       <p className="text-xs text-gray-500">
-                        {(
-                          selectedFile.size / 1024
-                        ).toFixed(1)}{" "}
-                        KB
+                        {(selectedFile.size / 1024).toFixed(1)} KB
                       </p>
                     </div>
                   </div>
@@ -1893,211 +2411,223 @@ function GroupChat() {
           )}
 
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() =>
-                  setShowEmojiPicker(
-                    (prev) => !prev
-                  )
-                }
-                className="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-gray-200 transition"
-                title="Emoji"
-              >
-                😊
-              </button>
+            {isRecordingAudio ? (
+              <div className="flex items-center gap-3 flex-1 bg-red-50 rounded-xl px-4 h-12 border border-red-100">
+                <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
 
-              {showEmojiPicker && (
-                <div className="absolute bottom-14 left-0 z-[2000]">
-                  <EmojiPicker
-                    onEmojiClick={
-                      handleEmojiClick
-                    }
-                    width={320}
-                    height={400}
-                  />
+                <span className="text-red-600 font-medium min-w-[42px]">
+                  {formatAudioRecordingTime(audioRecordingSeconds)}
+                </span>
+
+                <span className="text-gray-500 text-sm truncate">
+                  Recording voice message...
+                </span>
+                <div className="ml-auto flex items-center gap-2 shrink-0">
+                  <button 
+                     type="button"
+                     onClick={cancelAudioRecording}
+                     className="text-gray-500 hover:text-red-500"
+                     title="Cancel recording"
+                  >
+                    <X size={20} />
+                  </button>
+                  <button 
+                     type="button"
+                     onClick={stopAudioRecording}
+                     className="w-9 h-9 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600"
+                     title="Send voice message"
+                  >
+                    <Send size={16} />
+                  </button>
                 </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() =>
-                  setShowAttachMenu(
-                    (prev) => !prev
-                  )
-                }
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
-                  showAttachMenu
-                    ? "bg-gray-200 text-gray-800"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-                title="Attach"
-              >
-                <Paperclip size={20} />
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={handleFileChange}
-                accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.avi,.mkv"
-              />
-
-              <input
-                ref={documentInputRef}
-                type="file"
-                className="hidden"
-                onChange={handleFileChange}
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.zip"
-              />
-
-              {showAttachMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-[1900]"
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  <button
+                    type="button"
                     onClick={() =>
-                      setShowAttachMenu(false)
+                      setShowEmojiPicker((prev) => !prev)
                     }
+                    className="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-gray-200 transition"
+                    title="Emoji"
+                  >
+                    😊
+                  </button>
+
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-14 left-0 z-[2000]">
+                      <EmojiPicker
+                        onEmojiClick={handleEmojiClick}
+                        width={320}
+                        height={400}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowAttachMenu((prev) => !prev)
+                    }
+                    className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
+                      showAttachMenu
+                        ? "bg-gray-200 text-gray-800"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                    title="Attach"
+                  >
+                    <Paperclip size={20} />
+                  </button>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={handleFileChange}
+                    accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.avi,.mkv"
                   />
 
-                  <div className="absolute bottom-14 left-0 z-[2000] w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
+                  <input
+                    ref={documentInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.zip"
+                  />
+
+                  {showAttachMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-[1900]"
+                        onClick={() => setShowAttachMenu(false)}
+                      />
+
+                      <div className="absolute bottom-14 left-0 z-[2000] w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAttachMenu(false);
+                            fileInputRef.current?.click();
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          <ImageIcon size={18} className="text-gray-500" />
+                          Photo &amp; video
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAttachMenu(false);
+                            openCamera("photo");
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          <Camera size={18} className="text-gray-500" />
+                          Take photo
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAttachMenu(false);
+                            openCamera("video");
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          <Video size={18} className="text-gray-500" />
+                          Record video
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAttachMenu(false);
+                            documentInputRef.current?.click();
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          <FileText size={18} className="text-gray-500" />
+                          Document
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleSendLocation}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          <MapPin size={18} className="text-gray-500" />
+                          Location
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <input
+                  type="text"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    editingMessageId
+                      ? "Edit your message..."
+                      : "Type a message..."
+                  }
+                  className="flex-1 bg-gray-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-500"
+                />
+
+                {editingMessageId ? (
+                  <>
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowAttachMenu(false);
-                        fileInputRef.current?.click();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      onClick={cancelEditingMessage}
+                      className="w-12 h-12 rounded-xl bg-gray-200 text-gray-600 flex items-center justify-center hover:bg-gray-300 transition"
+                      title="Cancel edit"
                     >
-                      <ImageIcon
-                        size={18}
-                        className="text-gray-500"
-                      />
-                      Photo &amp; video
+                      <X size={20} />
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowAttachMenu(false);
-                        openCamera("photo");
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      onClick={handleEditMessage}
+                      disabled={!message.trim()}
+                      className="px-4 h-12 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Camera
-                        size={18}
-                        className="text-gray-500"
-                      />
-                      Take photo
+                      Update
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(false);
-                        openCamera("video");
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <Video
-                        size={18}
-                        className="text-gray-500"
-                      />
-                      Record video
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(false);
-                        documentInputRef.current?.click();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <FileText
-                        size={18}
-                        className="text-gray-500"
-                      />
-                      Document
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSendLocation}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <MapPin
-                        size={18}
-                        className="text-gray-500"
-                      />
-                      Location
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <input
-              type="text"
-              value={message}
-              onChange={(e) =>
-                setMessage(e.target.value)
-              }
-              onKeyDown={handleKeyDown}
-              placeholder={
-                editingMessageId
-                  ? "Edit your message..."
-                  : "Type a message..."
-              }
-              className="flex-1 bg-gray-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-500"
-            />
-
-            {editingMessageId ? (
-              <>
-                <button
-                  type="button"
-                  onClick={cancelEditingMessage}
-                  className="w-12 h-12 rounded-xl bg-gray-200 text-gray-600 flex items-center justify-center hover:bg-gray-300 transition"
-                  title="Cancel edit"
-                >
-                  <X size={20} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleEditMessage}
-                  disabled={!message.trim()}
-                  className="px-4 h-12 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Update
-                </button>
+                  </>
+                ) : message.trim() || selectedFile ? (
+                  <button
+                    type="button"
+                    onClick={handleSendMessage}
+                    disabled={sending}
+                    className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Send"
+                  >
+                    <Send size={20} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startAudioRecording}
+                    disabled={sending}
+                    className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Record voice message"
+                  >
+                    <Mic size={20} />
+                  </button>
+                )}
               </>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSendMessage}
-                disabled={
-                  (!message.trim() &&
-                    !selectedFile) ||
-                  sending
-                }
-                className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Send size={20} />
-              </button>
             )}
           </div>
         </div>
       </div>
 
-      {showShareLocationModal && (
-        <ShareLocationModal
-          onSelect={sendLocationWithOptions}
-          onClose={() => setShowShareLocationModal(false)}
-        />
-      )}
+      {/* LOCATION MODALS */}
       {showShareLocationModal && (
         <ShareLocationModal
           onSelect={sendLocationWithOptions}
@@ -2117,16 +2647,91 @@ function GroupChat() {
         />
       )}
 
+      {/* READ RECIPIENTS */}
+      {showReadRecipientsModal && readRecipientsMessage && (
+        <div
+          className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/40 px-4"
+          onClick={closeReadRecipients}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Read by
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  {getMessageReadCount(readRecipientsMessage)} of {Math.max((group.members?.length || 1) - 1, 0)} members
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeReadRecipients}
+                className="w-9 h-9 rounded-full hover:bg-gray-100 flex items-center justify-center"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto p-3">
+              {getReadRecipients(readRecipientsMessage)
+                .filter((member) => getId(member) !== currentUserId)
+                .map((member) => (
+                  <div
+                    key={getId(member)}
+                    className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-gray-50"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-green-100 overflow-hidden flex items-center justify-center shrink-0">
+                      {member.profileImage ? (
+                        <img
+                          src={`${API_BASE_URL}${member.profileImage}`}
+                          alt={member.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Users size={18} className="text-green-600" />
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {member.name || member.username || "Member"}
+                      </p>
+                      {member.username && (
+                        <p className="text-xs text-gray-500 truncate">
+                          @{member.username}
+                        </p>
+                      )}
+                    </div>
+
+                    <Check size={17} className="text-blue-500 shrink-0" />
+                  </div>
+                ))}
+
+              {getMessageReadCount(readRecipientsMessage) === 0 && (
+                <div className="py-10 text-center">
+                  <p className="text-sm text-gray-400">
+                    No group member has read this message yet.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE MESSAGE */}
       {showDeleteModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/40 px-4"
           onClick={handleDeleteCancel}
         >
           <div
             className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-5"
-            onClick={(e) =>
-              e.stopPropagation()
-            }
+            onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Delete message
@@ -2134,31 +2739,21 @@ function GroupChat() {
 
             <div className="space-y-2">
               {(() => {
-                const selectedMessage =
-                  messages.find(
-                    (m) =>
-                      m._id === deleteMessageId
-                  );
+                const selectedMessage = messages.find(
+                  (m) => m._id === deleteMessageId
+                );
 
                 if (!selectedMessage) return null;
 
-                const messageSenderId =
-                  selectedMessage.sender?._id?.toString() ||
-                  selectedMessage.sender?.toString();
-
-                const isMine =
-                  messageSenderId === currentUserId;
+                const messageSenderId = getId(selectedMessage.sender);
+                const isMine = messageSenderId === currentUserId;
 
                 return (
                   <>
                     {isMine && (
                       <button
                         type="button"
-                        onClick={() =>
-                          handleDeleteConfirm(
-                            "everyone"
-                          )
-                        }
+                        onClick={() => handleDeleteConfirm("everyone")}
                         className="w-full rounded-xl px-4 py-3 text-left text-red-600 font-medium hover:bg-red-50 transition"
                       >
                         Delete for everyone
@@ -2167,9 +2762,7 @@ function GroupChat() {
 
                     <button
                       type="button"
-                      onClick={() =>
-                        handleDeleteConfirm("me")
-                      }
+                      onClick={() => handleDeleteConfirm("me")}
                       className="w-full rounded-xl px-4 py-3 text-left text-gray-700 font-medium hover:bg-gray-100 transition"
                     >
                       Delete for me
@@ -2190,20 +2783,17 @@ function GroupChat() {
         </div>
       )}
 
+      {/* CLEAR CHAT */}
       {showClearChatModal && (
         <div
           className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 px-4"
           onClick={() => {
-            if (!clearingChat) {
-              setShowClearChatModal(false);
-            }
+            if (!clearingChat) setShowClearChatModal(false);
           }}
         >
           <div
             className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-5"
-            onClick={(e) =>
-              e.stopPropagation()
-            }
+            onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Clear chat?
@@ -2220,16 +2810,12 @@ function GroupChat() {
                 disabled={clearingChat}
                 className="w-full rounded-xl px-4 py-3 text-left text-red-600 font-medium hover:bg-red-50 transition disabled:opacity-50"
               >
-                {clearingChat
-                  ? "Clearing chat..."
-                  : "Clear chat"}
+                {clearingChat ? "Clearing chat..." : "Clear chat"}
               </button>
 
               <button
                 type="button"
-                onClick={() =>
-                  setShowClearChatModal(false)
-                }
+                onClick={() => setShowClearChatModal(false)}
                 disabled={clearingChat}
                 className="w-full rounded-xl px-4 py-3 text-left text-gray-500 font-medium hover:bg-gray-100 transition"
               >
@@ -2240,8 +2826,9 @@ function GroupChat() {
         </div>
       )}
 
+      {/* CAMERA */}
       {showCamera && (
-        <div className="fixed inset-0 z-[100] bg-black">
+        <div className="fixed inset-0 z-[3000] bg-black">
           <div className="relative w-full h-full bg-black flex flex-col">
             <div className="absolute top-0 left-0 right-0 z-20 px-5 py-5 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent">
               <div>
@@ -2261,15 +2848,12 @@ function GroupChat() {
               </div>
 
               <div className="flex items-center gap-2">
-                {cameraMode === "video" &&
-                  isRecording && (
-                    <span className="flex items-center gap-2 bg-red-600/90 text-white text-sm font-medium px-3 py-1.5 rounded-full">
-                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                      {formatRecordingTime(
-                        recordingSeconds
-                      )}
-                    </span>
-                  )}
+                {cameraMode === "video" && isRecording && (
+                  <span className="flex items-center gap-2 bg-red-600/90 text-white text-sm font-medium px-3 py-1.5 rounded-full">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    {formatRecordingTime(recordingSeconds)}
+                  </span>
+                )}
 
                 <button
                   type="button"
@@ -2296,17 +2880,9 @@ function GroupChat() {
               {cameraMode === "video" ? (
                 <button
                   type="button"
-                  onClick={
-                    isRecording
-                      ? stopRecording
-                      : startRecording
-                  }
+                  onClick={isRecording ? stopRecording : startRecording}
                   className="w-20 h-20 rounded-full bg-white border-[5px] border-white/50 shadow-xl hover:scale-105 active:scale-95 transition flex items-center justify-center"
-                  title={
-                    isRecording
-                      ? "Stop recording"
-                      : "Start recording"
-                  }
+                  title={isRecording ? "Stop recording" : "Start recording"}
                 >
                   {isRecording ? (
                     <span className="w-8 h-8 rounded-md bg-red-600" />

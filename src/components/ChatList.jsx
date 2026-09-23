@@ -77,6 +77,7 @@ function ChatList() {
 
     if (message.messageType === "image") return "📷 Photo";
     if (message.messageType === "video") return "🎥 Video";
+    if (message.messageType === "audio") return "🎤 Voice message";
     if (message.messageType === "location") {
       return message.location?.isLive
       ? "📍 Live location"
@@ -94,6 +95,7 @@ function ChatList() {
       const videoExtensions = ["mp4", "webm", "mov", "avi", "mkv"];
 
       if (imageExtensions.includes(extension)) return "📷 Photo";
+      if (audioExtensions.includes(extension)) return "🎤 Voice message";
       if (videoExtensions.includes(extension)) return "🎥 Video";
 
       return `📎 ${message.fileName}`;

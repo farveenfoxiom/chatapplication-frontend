@@ -14,6 +14,7 @@ import {
   Camera,
   Image as ImageIcon,
   MapPin,
+  Mic
 } from "lucide-react";
 import EmojiPicker from "emoji-picker-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -40,6 +41,8 @@ import {
   setError,
 } from "../redux/slices/messageSlice";
 import LocationMap from "../components/LocationMap";
+import ShareLocationModal from "../components/shareLocationModal";
+import LocationPreviewModal from "../components/LocationPreviewModal";
 
 import {
   setUserOnline,
@@ -48,6 +51,190 @@ import {
 } from "../redux/slices/presenceSlice";
 
 const API_BASE_URL = "http://localhost:5000";
+
+const AudioPlayer = ({
+  src,
+  isMine,
+  isRead,
+  isDelivered,
+  time,
+  isPlayed,
+  messageId,
+}) => {
+  const audioRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [played, setPlayed] = useState(isPlayed || false);
+
+  useEffect(() => {
+    setPlayed(isPlayed);
+  }, [isPlayed]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (audio.paused) {
+      audio.play().catch((error) => console.error("Audio play error:", error));
+      setIsPlaying(true);
+
+      // Trigger socket event ONLY if current user is receiving an unplayed voice message
+      if (!isMine && !played) {
+        setPlayed(true);
+        socket.emit("mark_audio_played", { messageId });
+      }
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) setDuration(audioRef.current.duration || 0);
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+    if (audioRef.current) audioRef.current.currentTime = 0;
+  };
+
+  const handleProgressChange = (e) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const newTime = Number(e.target.value);
+    audio.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
+  const formatTime = (seconds) => {
+    if (!seconds || !Number.isFinite(seconds)) return "0:00";
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  };
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const heights = [10, 18, 12, 26, 14, 22, 8, 16, 20, 12, 24, 10, 16, 22, 14, 20, 12, 18, 24];
+
+  return (
+    <div
+      className={`relative flex items-center gap-3 w-72 max-w-full p-3 rounded-2xl ${
+        isMine
+          ? "bg-green-500 text-white rounded-br-none"
+          : "bg-white text-gray-800 rounded-bl-none shadow-sm"
+      }`}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onEnded={handleEnded}
+      />
+
+      <div className="relative shrink-0">
+        <div
+          className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+            isMine
+              ? played
+                ? "bg-blue-100 text-blue-500"
+                : "bg-white/20 text-white"
+              : played
+              ? "bg-blue-100 text-blue-500"
+              : "bg-green-100 text-green-600"
+          }`}
+        >
+          <Mic size={20} />
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={togglePlay}
+            className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition ${
+              isMine
+                ? "bg-white text-green-600 hover:bg-white/90"
+                : "bg-green-500 text-white hover:bg-green-600"
+            }`}
+          >
+            {isPlaying ? (
+              <span className="text-xs font-bold leading-none">❚❚</span>
+            ) : (
+              <span className="text-xs font-bold leading-none ml-0.5">▶</span>
+            )}
+          </button>
+
+          <div className="relative flex-1 flex items-center gap-[2px] h-7">
+            {Array.from({ length: 19 }).map((_, index) => {
+              const barPosition = (index / 19) * 100;
+              const isActive = barPosition <= progress;
+              const heightPx = heights[index % heights.length];
+
+              return (
+                <div
+                  key={index}
+                  style={{ height: `${heightPx}px` }}
+                  className={`w-[3px] rounded-full transition-colors ${
+                    isActive
+                      ? isMine
+                        ? "bg-white"
+                        : "bg-green-500"
+                      : isMine
+                      ? "bg-white/40"
+                      : "bg-gray-300"
+                  }`}
+                />
+              );
+            })}
+
+            <input
+              type="range"
+              min="0"
+              max={duration || 0}
+              step="0.1"
+              value={currentTime}
+              onChange={handleProgressChange}
+              aria-label="Audio progress"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center text-[10px] mt-1 font-medium">
+          <span className={isMine ? "text-white/80" : "text-gray-500"}>
+            {isPlaying ? formatTime(currentTime) : formatTime(duration)}
+          </span>
+
+          <div
+            className={`flex items-center gap-1 ${
+              isMine ? "text-white/80" : "text-gray-400"
+            }`}
+          >
+            <span>{time}</span>
+            {isMine && (
+              <span
+                className={
+                  played || isRead ? "text-blue-500 font-bold" : "text-white/80"
+                }
+              >
+                {isDelivered || played ? "✓✓" : "✓"}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function Chat() {
   const { userId } = useParams();
@@ -78,6 +265,23 @@ function Chat() {
   const recordedChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
 
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [audioRecordingSeconds, setAudioRecordingSeconds] = useState(0);
+  const audioStreamRef = useRef(null);
+  const audioMediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioTimerRef = useRef(null);
+  const audioDiscardedRef = useRef(false);
+
+  const [showShareLocationModal, setShowShareLocationModal] = useState(false);
+  const [locationPreview, setLocationPreview] = useState(null);
+  const [sendingLocation, setSendingLocation] = useState(false);
+
+  const liveLocationWatchIdRef = useRef(null);
+  const liveLocationMessageIdRef = useRef(null);
+  const liveLocationTimeoutRef = useRef(null);
+  
+
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [sending, setSending] = useState(false);
   const [deleteMessageId, setDeleteMessageId] = useState(null);
@@ -95,26 +299,11 @@ function Chat() {
   const isNearBottomRef = useRef(true);
   const isInitialLoadRef = useRef(true);
 
-  // Tracks every message _id that has already been dispatched into Redux,
-  // from EITHER the optimistic send-response path or the socket
-  // "new_message" event. Refs update synchronously (unlike a variable
-  // captured from useSelector at render time), so this check is immune to
-  // the race between "your own API response arriving" and "the server
-  // echoing new_message back to your own socket room" — both of which
-  // fire for a message you just sent. Without this, whichever path lost
-  // the race would see a stale `messages` array and double-dispatch.
   const addedMessageIdsRef = useRef(new Set());
 
-  // Returns true (and marks the id as seen) only the first time this id
-  // is registered. Call this before every dispatch that adds a message
-  // to Redux, and skip the dispatch if it returns false.
   const registerMessageId = (id) => {
     if (!id) return false;
-
-    if (addedMessageIdsRef.current.has(id)) {
-      return false;
-    }
-
+    if (addedMessageIdsRef.current.has(id)) return false;
     addedMessageIdsRef.current.add(id);
     return true;
   };
@@ -129,12 +318,10 @@ function Chat() {
 
   const scrollToBottom = (smooth = true) => {
     isNearBottomRef.current = true;
-
     messagesEndRef.current?.scrollIntoView({
       behavior: smooth ? "smooth" : "auto",
       block: "end",
     });
-
     setShowScrollButton(false);
   };
 
@@ -150,11 +337,9 @@ function Chat() {
     }
 
     const container = messagesContainerRef.current;
-
     if (!container) return;
 
     const oldestMessage = messages[0];
-
     if (!oldestMessage?.createdAt) return;
 
     const oldScrollHeight = container.scrollHeight;
@@ -175,25 +360,14 @@ function Chat() {
 
       if (olderMessages.length > 0) {
         isNearBottomRef.current = false;
-
-        // Register these ids so a later socket echo or resend of any of
-        // these older messages can't be double-added.
         olderMessages.forEach((m) => {
-          if (m?._id) {
-            addedMessageIdsRef.current.add(m._id);
-          }
+          if (m?._id) addedMessageIdsRef.current.add(m._id);
         });
 
-        dispatch(
-          setMessages([
-            ...olderMessages,
-            ...messages,
-          ])
-        );
+        dispatch(setMessages([...olderMessages, ...messages]));
 
         requestAnimationFrame(() => {
           const newScrollHeight = container.scrollHeight;
-
           container.scrollTop =
             newScrollHeight - oldScrollHeight + oldScrollTop;
         });
@@ -210,16 +384,11 @@ function Chat() {
 
   const handleScroll = async (e) => {
     const container = e.target;
-
     const { scrollTop, scrollHeight, clientHeight } = container;
-
-    const distanceFromBottom =
-      scrollHeight - scrollTop - clientHeight;
-
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
     const isAtBottom = distanceFromBottom < 100;
 
     isNearBottomRef.current = isAtBottom;
-
     setShowScrollButton(!isAtBottom);
 
     if (
@@ -243,26 +412,20 @@ function Chat() {
         isInitialLoadRef.current = true;
         isNearBottomRef.current = true;
         isLoadingOlderMessagesRef.current = false;
-
-        // Reset the dedupe set for the new chat so ids from a previous
-        // conversation don't linger (and so this chat starts clean).
         addedMessageIdsRef.current = new Set();
 
         setShowScrollButton(false);
         setHasMoreMessages(true);
 
         const userData = await getUserById(userId, token);
-
         if (!isMounted) return;
 
         setChatUser(userData.user);
 
         const messageData = await getMessages(userId, token, 20);
-
         if (!isMounted) return;
 
         const initialMessages = messageData.messages || [];
-
         dispatch(setMessages(initialMessages));
 
         addedMessageIdsRef.current = new Set(
@@ -274,26 +437,16 @@ function Chat() {
         try {
           await markMessagesAsRead(userId, token);
         } catch (readError) {
-          console.error(
-            "Mark messages as read error:",
-            readError
-          );
+          console.error("Mark messages as read error:", readError);
         }
       } catch (error) {
         if (!isMounted) return;
-
         console.error("Failed to load chat:", error);
-
         dispatch(
-          setError(
-            error.response?.data?.message ||
-              "Failed to load chat"
-          )
+          setError(error.response?.data?.message || "Failed to load chat")
         );
       } finally {
-        if (isMounted) {
-          dispatch(setLoading(false));
-        }
+        if (isMounted) dispatch(setLoading(false));
       }
     };
 
@@ -329,12 +482,7 @@ function Chat() {
 
     const handleUserOffline = (data) => {
       if (data.userId?.toString() === userId.toString()) {
-        dispatch(
-          setUserOffline({
-            userId,
-            lastSeen: data.lastSeen,
-          })
-        );
+        dispatch(setUserOffline({ userId, lastSeen: data.lastSeen }));
       }
     };
 
@@ -342,70 +490,37 @@ function Chat() {
       socket.emit("check_user_online", userId);
     };
 
-    socket.on(
-      "user_online_status",
-      handleOnlineStatus
-    );
-
-    socket.on(
-      "user_online",
-      handleUserOnline
-    );
-
-    socket.on(
-      "user_offline",
-      handleUserOffline
-    );
+    socket.on("user_online_status", handleOnlineStatus);
+    socket.on("user_online", handleUserOnline);
+    socket.on("user_offline", handleUserOffline);
 
     if (socket.connected) {
       checkOnlineStatus();
     } else {
-      socket.once(
-        "connect",
-        checkOnlineStatus
-      );
+      socket.once("connect", checkOnlineStatus);
     }
 
     return () => {
-      socket.off(
-        "user_online_status",
-        handleOnlineStatus
-      );
-
-      socket.off(
-        "user_online",
-        handleUserOnline
-      );
-
-      socket.off(
-        "user_offline",
-        handleUserOffline
-      );
-
-      socket.off(
-        "connect",
-        checkOnlineStatus
-      );
+      socket.off("user_online_status", handleOnlineStatus);
+      socket.off("user_online", handleUserOnline);
+      socket.off("user_offline", handleUserOffline);
+      socket.off("connect", checkOnlineStatus);
     };
   }, [userId, dispatch]);
 
   useEffect(() => {
     const handleNewMessage = async (data) => {
       const newMessage = data?.message;
-
       if (!newMessage) return;
 
       const messageSenderId =
-        newMessage.sender?._id?.toString() ||
-        newMessage.sender?.toString();
+        newMessage.sender?._id?.toString() || newMessage.sender?.toString();
 
       const messageReceiverId =
-        newMessage.receiver?._id?.toString() ||
-        newMessage.receiver?.toString();
+        newMessage.receiver?._id?.toString() || newMessage.receiver?.toString();
 
       const currentUserId =
-        currentUser?._id?.toString() ||
-        currentUser?.id?.toString();
+        currentUser?._id?.toString() || currentUser?.id?.toString();
 
       if (!currentUserId || !userId) return;
 
@@ -417,11 +532,6 @@ function Chat() {
 
       if (!isForThisChat) return;
 
-      // The server echoes new_message back to the sender's own socket
-      // room (so other open tabs/devices update), which means a message
-      // YOU just sent can arrive here too. registerMessageId guards
-      // against adding it twice alongside the optimistic dispatch in
-      // handleSendMessage below.
       if (registerMessageId(newMessage._id)) {
         dispatch(messageReceived(newMessage));
       }
@@ -429,126 +539,123 @@ function Chat() {
       try {
         await markMessagesAsRead(userId, token);
       } catch (error) {
-        console.error(
-          "Failed to mark realtime message as read:",
-          error
-        );
+        console.error("Failed to mark realtime message as read:", error);
       }
     };
 
     const handleMessageEdited = (data) => {
       const updatedMessage = data?.message;
-
       if (!updatedMessage) return;
-
-      dispatch(
-        messageReplaced(updatedMessage)
-      );
+      dispatch(messageReplaced(updatedMessage));
     };
 
     const handleMessageDeleted = (data) => {
       const messageId = data?.messageId;
-
       if (!messageId) return;
-
       dispatch(removeMessage(messageId));
     };
 
-    socket.on(
-      "new_message",
-      handleNewMessage
-    );
+    const handleAudioMarkedPlayed = (data) => {
+      const { messageId } = data;
+      if (!messageId) return;
 
-    socket.on(
-      "message_edited",
-      handleMessageEdited
-    );
-
-    socket.on(
-      "message_deleted",
-      handleMessageDeleted
-    );
-
-    return () => {
-      socket.off(
-        "new_message",
-        handleNewMessage
-      );
-
-      socket.off(
-        "message_edited",
-        handleMessageEdited
-      );
-
-      socket.off(
-        "message_deleted",
-        handleMessageDeleted
+      dispatch(
+        updateMessage({
+          messageId,
+          updates: { isPlayed: true, isRead: true , isDelivered : true },
+        })
       );
     };
-  }, [
-    userId,
-    currentUser,
-    token,
-    dispatch,
-  ]);
+
+    const handleLocationUpdate = (data) => {
+      const { messageId, latitude , longitude , lastUpdatedAt} = data || {};
+      if(!messageId) return;
+      
+      const existing = messages.find(
+        (m) => m._id?.toString() === messageId.toString()
+      );
+
+      if (!existing) return;
+
+      dispatch(
+        updateMessage({
+          messageId,
+          updates : {
+            location : { ...existing.location,latitude, longitude, lastUpdatedAt,},
+          },
+        })
+      );
+    };
+
+    const handleLocationShareStopped = (data) => {
+      const { messageId } = data || {};
+      if(!messageId) return;
+      const existing = messages.find(
+        (m) => m._id?.toString() === messageId.toString()
+      );
+
+      if (!existing) return;
+      dispatch(
+        updateMessage({
+          messageId,
+          updates: {
+            location: {...existing.location ,isLive : false},
+          },
+        })
+      );
+    };
+
+    socket.on("new_message", handleNewMessage);
+    socket.on("message_edited", handleMessageEdited);
+    socket.on("message_deleted", handleMessageDeleted);
+    socket.on("audio_marked_played", handleAudioMarkedPlayed);
+    socket.on("location_update", handleLocationUpdate);
+    socket.on("location_share_stopped", handleLocationShareStopped);
+    
+    return () => {
+      socket.off("new_message", handleNewMessage);
+      socket.off("message_edited", handleMessageEdited);
+      socket.off("message_deleted", handleMessageDeleted);
+      socket.off("audio_marked_played", handleAudioMarkedPlayed);
+      socket.off("location_update", handleLocationUpdate);
+      socket.off("location_share_stopped", handleLocationShareStopped);
+      
+    };
+  }, [userId, currentUser, token, dispatch , messages]);
 
   useEffect(() => {
     if (!userId || !currentUser) return;
 
     const currentUserId =
-      currentUser?._id?.toString() ||
-      currentUser?.id?.toString();
+      currentUser?._id?.toString() || currentUser?.id?.toString();
 
     const handleMessagesRead = (data) => {
-      if (
-        data.userId?.toString() !==
-        userId.toString()
-      ) {
-        return;
-      }
+      if (data.userId?.toString() !== userId.toString()) return;
 
       messages.forEach((message) => {
         const senderId =
-          message.sender?._id?.toString() ||
-          message.sender?.toString();
+          message.sender?._id?.toString() || message.sender?.toString();
 
         const receiverId =
-          message.receiver?._id?.toString() ||
-          message.receiver?.toString();
+          message.receiver?._id?.toString() || message.receiver?.toString();
 
-        if (
-          senderId === currentUserId &&
-          receiverId === userId.toString()
-        ) {
+        if (senderId === currentUserId && receiverId === userId.toString()) {
           dispatch(
             updateMessage({
               messageId: message._id,
-              updates: {
-                isRead: true,
-              },
+              updates: { isRead: true },
             })
           );
         }
       });
     };
 
-    socket.on(
-      "messages_read",
-      handleMessagesRead
-    );
+    socket.on("messages_read", handleMessagesRead);
 
     return () => {
-      socket.off(
-        "messages_read",
-        handleMessagesRead
-      );
+      socket.off("messages_read", handleMessagesRead);
     };
-  }, [
-    userId,
-    currentUser,
-    messages,
-    dispatch,
-  ]);
+  }, [userId, currentUser, messages, dispatch]);
 
   useEffect(() => {
     isInitialLoadRef.current = true;
@@ -556,9 +663,7 @@ function Chat() {
   }, [userId]);
 
   useEffect(() => {
-    if (!messages.length) {
-      setShowScrollButton(false);
-    }
+    if (!messages.length) setShowScrollButton(false);
   }, [messages]);
 
   const setMessagesContentRef = (node) => {
@@ -584,7 +689,6 @@ function Chat() {
     });
 
     observer.observe(node);
-
     resizeObserverRef.current = observer;
 
     if (isInitialLoadRef.current) {
@@ -604,15 +708,10 @@ function Chat() {
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
-
     if (!file) return;
 
-    const isVideo =
-      file.type.startsWith("video/");
-
-    const maxSize = isVideo
-      ? 50 * 1024 * 1024
-      : 5 * 1024 * 1024;
+    const isVideo = file.type.startsWith("video/");
+    const maxSize = isVideo ? 50 * 1024 * 1024 : 5 * 1024 * 1024;
 
     if (file.size > maxSize) {
       dispatch(
@@ -622,9 +721,7 @@ function Chat() {
             : "File size must be less than 5 MB"
         )
       );
-
       e.target.value = "";
-
       return;
     }
 
@@ -652,9 +749,7 @@ function Chat() {
       return;
     }
 
-    const previewUrl =
-      URL.createObjectURL(selectedFile);
-
+    const previewUrl = URL.createObjectURL(selectedFile);
     setSelectedFilePreview(previewUrl);
 
     return () => {
@@ -663,68 +758,32 @@ function Chat() {
   }, [selectedFile]);
 
   const handleEmojiClick = (emojiData) => {
-    setMessage(
-      (prev) => prev + emojiData.emoji
-    );
-
+    setMessage((prev) => prev + emojiData.emoji);
     setShowEmojiPicker(false);
   };
 
   const openCamera = async (mode = "photo") => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
-        alert(
-          "Camera is not supported by this browser."
-        );
-
+        alert("Camera is not supported by this browser.");
         return;
       }
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: {
-              ideal: "environment",
-            },
-            width: {
-              ideal: 1280,
-            },
-            height: {
-              ideal: 720,
-            },
-          },
-          audio: mode === "video",
-        });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: mode === "video",
+      });
 
       cameraStreamRef.current = stream;
-
       setCameraMode(mode);
       setShowCamera(true);
     } catch (error) {
-      console.error(
-        "Camera access error:",
-        error
-      );
-
-      if (error.name === "NotAllowedError") {
-        alert(
-          "Camera permission was denied. Please allow camera access."
-        );
-      } else if (
-        error.name === "NotFoundError"
-      ) {
-        alert(
-          "No camera was found on this device."
-        );
-      } else if (
-        error.name === "NotReadableError"
-      ) {
-        alert(
-          "Camera is already being used by another application."
-        );
-      } else {
-        alert("Unable to access camera.");
-      }
+      console.error("Camera access error:", error);
+      alert("Unable to access camera.");
     }
   };
 
@@ -733,63 +792,33 @@ function Chat() {
 
     const video = cameraVideoRef.current;
     const stream = cameraStreamRef.current;
-
     if (!video || !stream) return;
 
     video.srcObject = stream;
-
     video.onloadedmetadata = () => {
-      video.play().catch((error) => {
-        console.error(
-          "Video play error:",
-          error
-        );
-      });
-    };
-
-    return () => {
-      video.onloadedmetadata = null;
+      video.play().catch((error) => console.error("Video play error:", error));
     };
   }, [showCamera]);
 
   const closeCamera = () => {
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !==
-        "inactive"
-    ) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
 
     if (recordingTimerRef.current) {
-      clearInterval(
-        recordingTimerRef.current
-      );
-
+      clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
 
-    const stream =
-      cameraStreamRef.current;
-
+    const stream = cameraStreamRef.current;
     if (stream) {
-      stream.getTracks().forEach((track) => {
-        track.stop();
-      });
-
+      stream.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
-    }
-
-    if (cameraVideoRef.current) {
-      cameraVideoRef.current.srcObject =
-        null;
     }
 
     setIsRecording(false);
     setRecordingSeconds(0);
-
     recordedChunksRef.current = [];
-
     setShowCamera(false);
   };
 
@@ -804,215 +833,92 @@ function Chat() {
     return (
       candidates.find(
         (type) =>
-          typeof MediaRecorder !==
-            "undefined" &&
-          MediaRecorder.isTypeSupported?.(
-            type
-          )
+          typeof MediaRecorder !== "undefined" &&
+          MediaRecorder.isTypeSupported?.(type)
       ) || ""
     );
   };
 
   const startRecording = () => {
-    const stream =
-      cameraStreamRef.current;
+    const stream = cameraStreamRef.current;
+    if (!stream) return;
 
-    if (!stream) {
-      alert("Camera is not ready yet.");
-      return;
-    }
-
-    if (
-      typeof MediaRecorder ===
-      "undefined"
-    ) {
-      alert(
-        "Video recording is not supported by this browser."
-      );
-
-      return;
-    }
-
-    const mimeType =
-      pickSupportedMimeType();
-
+    const mimeType = pickSupportedMimeType();
     recordedChunksRef.current = [];
 
     const recorder = mimeType
-      ? new MediaRecorder(stream, {
-          mimeType,
-        })
+      ? new MediaRecorder(stream, { mimeType })
       : new MediaRecorder(stream);
 
     recorder.ondataavailable = (e) => {
-      if (
-        e.data &&
-        e.data.size > 0
-      ) {
-        recordedChunksRef.current.push(
-          e.data
-        );
+      if (e.data && e.data.size > 0) {
+        recordedChunksRef.current.push(e.data);
       }
     };
 
     recorder.onstop = () => {
       if (recordingTimerRef.current) {
-        clearInterval(
-          recordingTimerRef.current
-        );
-
-        recordingTimerRef.current = null;
+        clearInterval(recordingTimerRef.current);
       }
 
-      const chunks =
-        recordedChunksRef.current;
-
+      const chunks = recordedChunksRef.current;
       recordedChunksRef.current = [];
-
       if (!chunks.length) return;
 
-      const baseType = (
-        mimeType || "video/webm"
-      )
-        .split(";")[0]
-        .trim();
+      const baseType = (mimeType || "video/webm").split(";")[0].trim();
+      const blob = new Blob(chunks, { type: baseType });
+      const extension = baseType.includes("mp4") ? "mp4" : "webm";
 
-      const blob = new Blob(chunks, {
+      const file = new File([blob], `video-${Date.now()}.${extension}`, {
         type: baseType,
       });
-
-      const extension =
-        baseType.includes("mp4")
-          ? "mp4"
-          : "webm";
-
-      const file = new File(
-        [blob],
-        `video-${Date.now()}.${extension}`,
-        {
-          type: baseType,
-        }
-      );
 
       setSelectedFile(file);
     };
 
     recorder.start();
-
-    mediaRecorderRef.current =
-      recorder;
+    mediaRecorderRef.current = recorder;
 
     setIsRecording(true);
     setRecordingSeconds(0);
 
-    recordingTimerRef.current =
-      setInterval(() => {
-        setRecordingSeconds(
-          (prev) => prev + 1
-        );
-      }, 1000);
+    recordingTimerRef.current = setInterval(() => {
+      setRecordingSeconds((prev) => prev + 1);
+    }, 1000);
   };
 
   const stopRecording = () => {
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !==
-        "inactive"
-    ) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
-
     setIsRecording(false);
-
-    closeCameraAfterRecording();
+    closeCamera();
   };
 
-  const closeCameraAfterRecording = () => {
-    const stream =
-      cameraStreamRef.current;
-
-    if (stream) {
-      stream.getTracks().forEach((track) => {
-        track.stop();
-      });
-
-      cameraStreamRef.current = null;
-    }
-
-    if (cameraVideoRef.current) {
-      cameraVideoRef.current.srcObject =
-        null;
-    }
-
-    setRecordingSeconds(0);
-    setShowCamera(false);
-  };
-
-  const formatRecordingTime = (
-    totalSeconds
-  ) => {
-    const minutes = Math.floor(
-      totalSeconds / 60
-    );
-
-    const seconds =
-      totalSeconds % 60;
-
-    return `${minutes}:${seconds
-      .toString()
-      .padStart(2, "0")}`;
+  const formatRecordingTime = (totalSeconds) => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
   const capturePhoto = () => {
-    const video =
-      cameraVideoRef.current;
+    const video = cameraVideoRef.current;
+    if (!video || !video.videoWidth) return;
 
-    if (
-      !video ||
-      !video.videoWidth ||
-      !video.videoHeight
-    ) {
-      alert(
-        "Camera is not ready yet."
-      );
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
-      return;
-    }
-
-    const canvas =
-      document.createElement("canvas");
-
-    canvas.width =
-      video.videoWidth;
-
-    canvas.height =
-      video.videoHeight;
-
-    const context =
-      canvas.getContext("2d");
-
-    context.drawImage(
-      video,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob(
       (blob) => {
         if (!blob) return;
-
-        const file = new File(
-          [blob],
-          `camera-${Date.now()}.jpg`,
-          {
-            type: "image/jpeg",
-          }
-        );
-
+        const file = new File([blob], `camera-${Date.now()}.jpg`, {
+          type: "image/jpeg",
+        });
         setSelectedFile(file);
-
         closeCamera();
       },
       "image/jpeg",
@@ -1020,82 +926,66 @@ function Chat() {
     );
   };
 
-  useEffect(() => {
-    return () => {
-      if (
-        mediaRecorderRef.current &&
-        mediaRecorderRef.current.state !==
-          "inactive"
-      ) {
-        mediaRecorderRef.current.stop();
-      }
-
-      if (recordingTimerRef.current) {
-        clearInterval(
-          recordingTimerRef.current
-        );
-      }
-
-      const stream =
-        cameraStreamRef.current;
-
-      if (stream) {
-        stream.getTracks().forEach(
-          (track) => {
-            track.stop();
-          }
-        );
-      }
-    };
-  }, []);
-
   const handleSendMessage = async () => {
     const text = message.trim();
-
-    if (
-      (!text && !selectedFile) ||
-      sending
-    ) {
-      return;
-    }
+    if ((!text && !selectedFile) || sending) return;
 
     try {
       setSending(true);
+      const data = await sendMessage(userId, text, token, selectedFile);
 
-      const data = await sendMessage(
-        userId,
-        text,
-        token,
-        selectedFile
-      );
-
-      // The server also echoes this exact message back over the socket
-      // to your own room (see sendMessage controller). registerMessageId
-      // ensures only whichever path — this API response or that socket
-      // event — arrives first actually dispatches it into Redux.
       if (registerMessageId(data.message._id)) {
-        dispatch(
-          addMessage(data.message)
-        );
+        dispatch(addMessage(data.message));
       }
 
       isNearBottomRef.current = true;
-
       setMessage("");
       setSelectedFile(null);
       setSelectedFilePreview(null);
-
       dispatch(setError(""));
     } catch (error) {
-      console.error(
-        "Send message error:",
-        error
+      console.error("Send message error:", error);
+      dispatch(
+        setError(error.response?.data?.message || "Failed to send message")
       );
+    } finally {
+      setSending(false);
+    }
+  };
 
+  const pickSupportedAudioMimeType = () => {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4",
+    ];
+
+    return (
+      candidates.find(
+        (type) =>
+          typeof MediaRecorder !== "undefined" &&
+          MediaRecorder.isTypeSupported?.(type)
+      ) || ""
+    );
+  };
+
+  const sendAudioMessage = async (file) => {
+    try {
+      setSending(true);
+      const data = await sendMessage(userId, "", token, file);
+
+      if (registerMessageId(data.message._id)) {
+        dispatch(addMessage(data.message));
+      }
+
+      isNearBottomRef.current = true;
+      dispatch(setError(""));
+    } catch (error) {
+      console.error("Send audio error:", error);
       dispatch(
         setError(
-          error.response?.data?.message ||
-            "Failed to send message"
+          error.response?.data?.message || "Failed to send voice message"
         )
       );
     } finally {
@@ -1103,55 +993,221 @@ function Chat() {
     }
   };
 
-  const handleSendLocation = () => {
-    if(!navigator.geolocation) {
+  const startAudioRecording = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      audioDiscardedRef.current = false;
+
+      const mimeType = pickSupportedAudioMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((t) => t.stop());
+          audioStreamRef.current = null;
+        }
+
+        if (audioTimerRef.current) {
+          clearInterval(audioTimerRef.current);
+        }
+
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        setIsRecordingAudio(false);
+        setAudioRecordingSeconds(0);
+
+        if (audioDiscardedRef.current || !chunks.length) return;
+
+        const baseType = (mimeType || "audio/webm").split(";")[0].trim();
+        const blob = new Blob(chunks, { type: baseType });
+        const extension = baseType.includes("ogg")
+          ? "ogg"
+          : baseType.includes("mp4")
+          ? "m4a"
+          : "webm";
+
+        const file = new File([blob], `voice-${Date.now()}.${extension}`, {
+          type: baseType,
+        });
+
+        sendAudioMessage(file);
+      };
+
+      recorder.start();
+      audioMediaRecorderRef.current = recorder;
+      setIsRecordingAudio(true);
+      setAudioRecordingSeconds(0);
+
+      audioTimerRef.current = setInterval(() => {
+        setAudioRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (error) {
+      console.error("Audio recording error:", error);
+    }
+  };
+
+  const discardAudioRecording = () => {
+    audioDiscardedRef.current = true;
+    if (audioMediaRecorderRef.current?.state !== "inactive") {
+      audioMediaRecorderRef.current.stop();
+    }
+  };
+
+  const confirmAudioRecording = () => {
+    audioDiscardedRef.current = false;
+    if (audioMediaRecorderRef.current?.state !== "inactive") {
+      audioMediaRecorderRef.current.stop();
+    }
+  };
+
+  const stopLiveLocationTracking = () => {
+    if (liveLocationWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(liveLocationWatchIdRef.current);
+      liveLocationWatchIdRef.current = null;
+    }
+
+    if (liveLocationTimeoutRef.current !== null) {
+      clearTimeout(liveLocationTimeoutRef.current);
+      liveLocationTimeoutRef.current = null;
+    }
+
+    liveLocationMessageIdRef.current = null;
+  };
+
+  const startLiveLocationTracking = (messageId, durationMinutes) => {
+    stopLiveLocationTracking();
+
+    liveLocationMessageIdRef.current = messageId;
+
+    liveLocationWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        if (liveLocationMessageIdRef.current !== messageId) return;
+
+        socket.emit("send_location_update", {
+          messageId,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      (err) => {
+        console.error("watchPosition error:", err);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+
+    liveLocationTimeoutRef.current = setTimeout(() => {
+      socket.emit("stop_location_share", { messageId });
+      stopLiveLocationTracking();
+    }, durationMinutes * 60000);
+  };
+
+  const sendLocationWithOptions = (durationMinutes) => {
+    setShowShareLocationModal(false);
+
+    if (!navigator.geolocation) {
       alert("Geolocation is not supported by this browser.");
       return;
     }
-    setShowAttachMenu(false);
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude , longitude } = position.coords;
-          const data = await sendLocationMessage(
-            userId,
-            latitude,
-            longitude,
-            token
-          );
-
-          if (registerMessageId(data.message._id)){
-            dispatch(addMessage(data.message));
-          }
-          isNearBottomRef.current = true;
-          dispatch(setError(""));
-        }catch (error){
-          console.error("Send location error:" , error);
-          dispatch(
-            setError(
-              error.response?.data?.message || "Failed to send locaton"
-            )
-          );
-        }
+      (position) => {
+        setLocationPreview({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          isLive: Boolean(durationMinutes),
+          durationMinutes,
+        });
       },
-      (error) => {
-        if(error.code === error.PERMISSION_DENIED) {
-          alert("Location permission was denied");
-        }else {
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          alert("Location permission was denied.");
+        } else {
           alert("Unable to get your location.");
         }
       }
     );
   };
 
-  const handleKeyDown = (e) => {
-    if (
-      e.key === "Enter" &&
-      !e.shiftKey
-    ) {
-      e.preventDefault();
+  const cancelLocationPreview = () => {
+    setLocationPreview(null);
+  };
 
+  const confirmSendLocation = async () => {
+    if (!locationPreview || sendingLocation) return;
+
+    try {
+      setSendingLocation(true);
+
+      const { latitude, longitude, isLive, durationMinutes } =
+        locationPreview;
+
+      const data = await sendLocationMessage(
+        userId,
+        latitude,
+        longitude,
+        token,
+        isLive,
+        durationMinutes
+      );
+
+      if (registerMessageId(data.message._id)) {
+        dispatch(addMessage(data.message));
+      }
+
+      isNearBottomRef.current = true;
+      setLocationPreview(null);
+      dispatch(setError(""));
+
+      if (isLive) {
+        startLiveLocationTracking(data.message._id, durationMinutes);
+      }
+
+      setLocationPreview(null);
+      dispatch(setError(""));
+    } catch (error) {
+      console.error("Send location error:", error);
+      dispatch(
+        setError(
+          error.response?.data?.message || "Failed to send location"
+        )
+      );
+    } finally {
+      setSendingLocation(false);
+    }
+  };
+
+  const handleSendLocation = () => {
+    setShowAttachMenu(false);
+    setShowShareLocationModal(true);
+  };
+
+  const handleStopSharingLocation = (messageId) => {
+    socket.emit("stop_location_share", { messageId });
+
+    if (liveLocationMessageIdRef.current === messageId) {
+      stopLiveLocationTracking();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopLiveLocationTracking();
+    };
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
       if (editingMessageId) {
         handleEditMessage();
       } else {
@@ -1160,49 +1216,24 @@ function Chat() {
     }
   };
 
-  const handleDeleteMessage = (
-    messageId
-  ) => {
+  const handleDeleteMessage = (messageId) => {
     setDeleteMessageId(messageId);
     setShowDeleteModal(true);
   };
 
-  const handleDeleteConfirm = async (
-    deleteFor
-  ) => {
+  const handleDeleteConfirm = async (deleteFor) => {
     if (!deleteMessageId) return;
 
     try {
-      await deleteMessage(
-        deleteMessageId,
-        deleteFor,
-        token
-      );
-
+      await deleteMessage(deleteMessageId, deleteFor, token);
       if (deleteFor === "me") {
-        dispatch(
-          removeMessage(
-            deleteMessageId
-          )
-        );
+        dispatch(removeMessage(deleteMessageId));
       }
-
       setDeleteMessageId(null);
       setShowDeleteModal(false);
-
       dispatch(setError(""));
     } catch (error) {
-      console.error(
-        "Delete message error:",
-        error
-      );
-
-      dispatch(
-        setError(
-          error.response?.data?.message ||
-            "Failed to delete message"
-        )
-      );
+      console.error("Delete message error:", error);
     }
   };
 
@@ -1213,56 +1244,21 @@ function Chat() {
 
   const handleEditMessage = async () => {
     const text = message.trim();
-
-    if (
-      !text ||
-      !editingMessageId
-    ) {
-      return;
-    }
+    if (!text || !editingMessageId) return;
 
     try {
-      const data =
-        await editMessage(
-          editingMessageId,
-          text,
-          token
-        );
-
-      dispatch(
-        messageReplaced(
-          data.updatedMessage
-        )
-      );
-
+      const data = await editMessage(editingMessageId, text, token);
+      dispatch(messageReplaced(data.updatedMessage));
       setMessage("");
       setEditingMessageId(null);
-
       dispatch(setError(""));
     } catch (error) {
-      console.error(
-        "Edit message error:",
-        error
-      );
-
-      dispatch(
-        setError(
-          error.response?.data?.message ||
-            "Failed to edit message"
-        )
-      );
+      console.error("Edit message error:", error);
     }
   };
 
-  const startEditingMessage = (
-    msg
-  ) => {
-    if (
-      msg.messageType !== "text"
-    ) {
-      return;
-    }
-
+  const startEditingMessage = (msg) => {
+    if (msg.messageType !== "text") return;
     setEditingMessageId(msg._id);
     setMessage(msg.text);
   };
@@ -1272,120 +1268,60 @@ function Chat() {
     setMessage("");
   };
 
-  const downloadFile = async (
-    fileUrl,
-    fileName,
-    messageId
-  ) => {
+  const downloadFile = async (fileUrl, fileName, messageId) => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}${fileUrl}`
-      );
+      const response = await fetch(`${API_BASE_URL}${fileUrl}`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
 
-      const blob =
-        await response.blob();
-
-      const url =
-        window.URL.createObjectURL(
-          blob
-        );
-
-      const link =
-        document.createElement("a");
-
+      const link = document.createElement("a");
       link.href = url;
-      link.download =
-        fileName || "download";
-
+      link.download = fileName || "download";
       document.body.appendChild(link);
-
       link.click();
-
       document.body.removeChild(link);
-
       window.URL.revokeObjectURL(url);
 
       if (messageId) {
-        setDownloadedMessageIds(
-          (prev) => {
-            const next =
-              new Set(prev);
-
-            next.add(messageId);
-
-            return next;
-          }
-        );
+        setDownloadedMessageIds((prev) => new Set(prev).add(messageId));
       }
     } catch (error) {
-      console.error(
-        "File download error:",
-        error
-      );
+      console.error("File download error:", error);
     }
   };
 
-  const isImageMessage = (
-    msg
-  ) => {
-    if (
-      msg.messageType === "image"
-    ) {
-      return true;
-    }
+  // Strictly mutually exclusive type checkers
+  const isAudioMessage = (msg) => {
+    if (msg.messageType === "audio") return true;
+    const fileName = msg.fileName?.toLowerCase() || "";
+    return [".mp3", ".wav", ".ogg", ".m4a", ".aac", ".webm"].some((ext) =>
+      fileName.endsWith(ext)
+    ) && msg.messageType !== "video";
+  };
 
-    const fileName =
-      msg.fileName?.toLowerCase() ||
-      "";
+  const isVideoMessage = (msg) => {
+    if (isAudioMessage(msg)) return false;
+    if (msg.messageType === "video") return true;
+    const fileName = msg.fileName?.toLowerCase() || "";
+    return [".mp4", ".mov", ".avi", ".mkv"].some((ext) => fileName.endsWith(ext));
+  };
 
-    return [
-      ".jpg",
-      ".jpeg",
-      ".png",
-      ".webp",
-      ".gif",
-    ].some((extension) =>
-      fileName.endsWith(extension)
+  const isImageMessage = (msg) => {
+    if (msg.messageType === "image") return true;
+    const fileName = msg.fileName?.toLowerCase() || "";
+    return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) =>
+      fileName.endsWith(ext)
     );
   };
 
-  const isVideoMessage = (
-    msg
-  ) => {
-    if (
-      msg.messageType === "video"
-    ) {
-      return true;
-    }
+  const isLocationMessage = (msg) => msg.messageType === "location";
 
-    const fileName =
-      msg.fileName?.toLowerCase() ||
-      "";
-
-    return [
-      ".mp4",
-      ".webm",
-      ".mov",
-      ".avi",
-      ".mkv",
-    ].some((extension) =>
-      fileName.endsWith(extension)
-    );
-  };
-
-  const isLocationMessage = (msg) => 
-    msg.messageType === "location";
-
-  const getFileUrl = (msg) => {
-    return `${API_BASE_URL}${msg.fileUrl}`;
-  };
+  const getFileUrl = (msg) => `${API_BASE_URL}${msg.fileUrl}`;
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <p className="text-gray-500">
-          Loading chat...
-        </p>
+        <p className="text-gray-500">Loading chat...</p>
       </div>
     );
   }
@@ -1394,10 +1330,7 @@ function Chat() {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-500 mb-4">
-            User not found
-          </p>
-
+          <p className="text-red-500 mb-4">User not found</p>
           <button
             onClick={() => navigate("/")}
             className="text-green-600 font-semibold"
@@ -1427,31 +1360,21 @@ function Chat() {
               className="w-10 h-10 rounded-full object-cover"
             />
           ) : (
-            <User
-              size={20}
-              className="text-green-600"
-            />
+            <User size={20} className="text-green-600" />
           )}
         </div>
 
         <div>
-          <h2 className="font-semibold text-gray-900">
-            {chatUser.name}
-          </h2>
-
+          <h2 className="font-semibold text-gray-900">{chatUser.name}</h2>
           <p
             className={`text-xs ${
-              isOnline
-                ? "text-green-500"
-                : "text-gray-500"
+              isOnline ? "text-green-500" : "text-gray-500"
             }`}
           >
             {isOnline
               ? "Online"
               : lastSeen
-              ? `Last seen ${new Date(
-                  lastSeen
-                ).toLocaleString([], {
+              ? `Last seen ${new Date(lastSeen).toLocaleString([], {
                   day: "numeric",
                   month: "short",
                   hour: "numeric",
@@ -1469,9 +1392,7 @@ function Chat() {
           className="h-full overflow-y-auto p-4"
         >
           {error && (
-            <p className="text-center text-red-500 text-sm mb-3">
-              {error}
-            </p>
+            <p className="text-center text-red-500 text-sm mb-3">{error}</p>
           )}
 
           {loadingOlderMessages && (
@@ -1485,8 +1406,7 @@ function Chat() {
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <p className="text-gray-400">
-                No messages yet. Start the
-                conversation!
+                No messages yet. Start the conversation!
               </p>
             </div>
           ) : (
@@ -1496,69 +1416,45 @@ function Chat() {
             >
               {messages.map((msg) => {
                 const messageSenderId =
-                  msg.sender?._id?.toString() ||
-                  msg.sender?.toString();
+                  msg.sender?._id?.toString() || msg.sender?.toString();
 
                 const currentUserId =
-                  currentUser?._id?.toString() ||
-                  currentUser?.id?.toString();
+                  currentUser?._id?.toString() || currentUser?.id?.toString();
 
-                const isMine =
-                  messageSenderId ===
-                  currentUserId;
+                const isMine = messageSenderId === currentUserId;
 
-                const imageMessage =
-                  isImageMessage(msg);
-
-                const videoMessage =
-                  isVideoMessage(msg);
-
-                const locationMessage = 
-                  isLocationMessage(msg);
+                const audioMessage = isAudioMessage(msg);
+                const videoMessage = isVideoMessage(msg);
+                const imageMessage = isImageMessage(msg);
+                const locationMessage = isLocationMessage(msg);
 
                 return (
                   <div
                     key={msg._id}
                     className={`flex ${
-                      isMine
-                        ? "justify-end"
-                        : "justify-start"
+                      isMine ? "justify-end" : "justify-start"
                     }`}
                   >
                     <div className="group flex items-end gap-2">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {isMine &&
-                          msg.messageType ===
-                            "text" && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                startEditingMessage(
-                                  msg
-                                )
-                              }
-                              title="Edit message"
-                              className="text-gray-400 hover:text-green-500 p-1"
-                            >
-                              <Pencil
-                                size={16}
-                              />
-                            </button>
-                          )}
+                        {isMine && msg.messageType === "text" && (
+                          <button
+                            type="button"
+                            onClick={() => startEditingMessage(msg)}
+                            title="Edit message"
+                            className="text-gray-400 hover:text-green-500 p-1"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        )}
 
                         <button
                           type="button"
-                          onClick={() =>
-                            handleDeleteMessage(
-                              msg._id
-                            )
-                          }
+                          onClick={() => handleDeleteMessage(msg._id)}
                           title="Delete message"
                           className="text-gray-400 hover:text-red-500 p-1"
                         >
-                          <Trash
-                            size={16}
-                          />
+                          <Trash size={16} />
                         </button>
                       </div>
 
@@ -1566,7 +1462,8 @@ function Chat() {
                         className={`${
                           imageMessage ||
                           videoMessage ||
-                          locationMessage
+                          locationMessage ||
+                          audioMessage
                             ? "relative"
                             : `max-w-xs md:max-w-md px-4 py-2 rounded-2xl ${
                                 isMine
@@ -1575,249 +1472,174 @@ function Chat() {
                               }`
                         }`}
                       >
-                        {videoMessage &&
-                          msg.fileUrl && (
-                            <div className="relative">
-                              <video
-                                src={getFileUrl(
-                                  msg
-                                )}
-                                controls
-                                preload="metadata"
-                                className="max-w-xs md:max-w-sm max-h-80 rounded-2xl bg-black"
-                              />
+                        {/* 1. AUDIO MESSAGE */}
+                        {audioMessage && msg.fileUrl ? (
+                          <AudioPlayer
+                            src={getFileUrl(msg)}
+                            isMine={isMine}
+                            isRead={msg.isRead}
+                            isDelivered={msg.isDelivered}
+                            isPlayed={msg.isPlayed}
+                            messageId={msg._id}
+                            time={new Date(msg.createdAt).toLocaleTimeString(
+                              [],
+                              { hour: "2-digit", minute: "2-digit" }
+                            )}
+                          />
+                        ) : videoMessage && msg.fileUrl ? (
+                          /* 2. VIDEO MESSAGE */
+                          <div className="relative">
+                            <video
+                              src={getFileUrl(msg)}
+                              controls
+                              preload="metadata"
+                              className="max-w-xs md:max-w-sm max-h-80 rounded-2xl bg-black"
+                            />
 
-                              <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                                <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-                                  {new Date(
-                                    msg.createdAt
-                                  ).toLocaleTimeString(
-                                    [],
-                                    {
-                                      hour: "2-digit",
-                                      minute:
-                                        "2-digit",
-                                    }
-                                  )}
+                            <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full pointer-events-none">
+                              <span>
+                                {new Date(msg.createdAt).toLocaleTimeString(
+                                  [],
+                                  { hour: "2-digit", minute: "2-digit" }
+                                )}
+                              </span>
+                              {isMine && (
+                                <span
+                                  className={
+                                    msg.isRead ? "text-blue-400" : "text-white"
+                                  }
+                                >
+                                  {msg.isDelivered ? "✓✓" : "✓"}
                                 </span>
-
-                                {!isMine &&
-                                  !downloadedMessageIds.has(
-                                    msg._id
-                                  ) && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        downloadFile(
-                                          msg.fileUrl,
-                                          msg.fileName,
-                                          msg._id
-                                        )
-                                      }
-                                      title="Download video"
-                                      className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
-                                    >
-                                      <Download
-                                        size={
-                                          16
-                                        }
-                                      />
-                                    </button>
-                                  )}
-                              </div>
+                              )}
                             </div>
-                          )}
+                          </div>
+                        ) : imageMessage && msg.fileUrl ? (
+                          /* 3. IMAGE MESSAGE */
+                          <div className="relative">
+                            <img
+                              src={getFileUrl(msg)}
+                              alt={msg.fileName || "Image"}
+                              className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
+                              onClick={() =>
+                                window.open(getFileUrl(msg), "_blank")
+                              }
+                            />
 
-                        {imageMessage &&
-                          msg.fileUrl && (
-                            <div className="relative">
-                              <img
-                                src={getFileUrl(
-                                  msg
+                            <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full">
+                              <span>
+                                {new Date(msg.createdAt).toLocaleTimeString(
+                                  [],
+                                  { hour: "2-digit", minute: "2-digit" }
                                 )}
-                                alt={
-                                  msg.fileName ||
-                                  "Image"
-                                }
-                                className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
+                              </span>
+                              {isMine && (
+                                <span
+                                  className={
+                                    msg.isRead ? "text-blue-400" : "text-white"
+                                  }
+                                >
+                                  {msg.isDelivered ? "✓✓" : "✓"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : locationMessage && msg.location ? (
+                          /* 4. LOCATION MESSAGE */
+                          <LocationMap
+                            latitude={msg.location.latitude}
+                            longitude={msg.location.longitude}
+                            isLive={msg.location.isLive}
+                            expiresAt={msg.location.liveExpiresAt}
+                            isMine={isMine}
+                            onStopSharing={()=> handleStopSharingLocation(msg._id)}
+                            time={new Date(msg.createdAt).toLocaleTimeString(
+                              [],
+                              { hour: "2-digit", minute: "2-digit" }
+                            )}
+                          />
+                        ) : msg.messageType === "file" && msg.fileUrl ? (
+                          /* 5. GENERIC FILE / DOCUMENT */
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600">
+                              <FileText size={20} />
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-sm truncate">
+                                {msg.fileName || "File"}
+                              </p>
+
+                              {msg.fileSize && (
+                                <p
+                                  className={`text-xs ${
+                                    isMine ? "text-green-100" : "text-gray-500"
+                                  }`}
+                                >
+                                  {(msg.fileSize / 1024).toFixed(1)} KB
+                                </p>
+                              )}
+                            </div>
+
+                            {!isMine && (
+                              <button
+                                type="button"
                                 onClick={() =>
-                                  window.open(
-                                    getFileUrl(
-                                      msg
-                                    ),
-                                    "_blank"
+                                  downloadFile(
+                                    msg.fileUrl,
+                                    msg.fileName,
+                                    msg._id
                                   )
                                 }
-                              />
+                                title="Download file"
+                                className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 hover:bg-gray-300"
+                              >
+                                <Download size={18} />
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
 
-                              <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                                <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-                                  {new Date(
-                                    msg.createdAt
-                                  ).toLocaleTimeString(
-                                    [],
-                                    {
-                                      hour: "2-digit",
-                                      minute:
-                                        "2-digit",
-                                    }
-                                  )}
-                                </span>
-
-                                {!isMine &&
-                                  !downloadedMessageIds.has(
-                                    msg._id
-                                  ) && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        downloadFile(
-                                          msg.fileUrl,
-                                          msg.fileName,
-                                          msg._id
-                                        )
-                                      }
-                                      title="Download image"
-                                      className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
-                                    >
-                                      <Download
-                                        size={
-                                          16
-                                        }
-                                      />
-                                    </button>
-                                  )}
-                              </div>
-                            </div>
-                          )}
-                        {locationMessage &&
-                          msg.location && (
-                            <LocationMap
-                              latitude={msg.location.latitude}
-                              longitude={msg.location.longitude}
-                              isLive={msg.location.isLive}
-                            />
-                          )}
-                        {!imageMessage &&
-                          !videoMessage &&
-                          msg.messageType ===
-                            "file" &&
-                          msg.fileUrl && (
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600">
-                                <FileText
-                                  size={
-                                    20
-                                  }
-                                />
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <p className="font-medium text-sm truncate">
-                                  {msg.fileName ||
-                                    "File"}
-                                </p>
-
-                                {msg.fileSize && (
-                                  <p
-                                    className={`text-xs ${
-                                      isMine
-                                        ? "text-green-100"
-                                        : "text-gray-500"
-                                    }`}
-                                  >
-                                    {(
-                                      msg.fileSize /
-                                      1024
-                                    ).toFixed(
-                                      1
-                                    )}{" "}
-                                    KB
-                                  </p>
-                                )}
-                              </div>
-
-                              {!isMine &&
-                                (downloadedMessageIds.has(
-                                  msg._id
-                                ) ? (
-                                  <span
-                                    className="text-xs text-gray-400 shrink-0"
-                                    title="Already downloaded"
-                                  >
-                                    Downloaded
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      downloadFile(
-                                        msg.fileUrl,
-                                        msg.fileName,
-                                        msg._id
-                                      )
-                                    }
-                                    title="Download file"
-                                    className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 hover:bg-gray-300"
-                                  >
-                                    <Download
-                                      size={
-                                        18
-                                      }
-                                    />
-                                  </button>
-                                ))}
-                            </div>
-                          )}
-
-                        {msg.messageType ===
-                          "text" &&
-                          msg.text && (
-                            <p className="break-words">
-                              {msg.text}
-                            </p>
-                          )}
-
-                        {msg.messageType !==
-                          "text" &&
-                          msg.text && (
-                            <p className="break-words mt-2">
-                              {msg.text}
-                            </p>
-                          )}
+                        {/* TEXT CONTENT */}
+                        {msg.text && (
+                          <p
+                            className={`break-words ${
+                              audioMessage ||
+                              videoMessage ||
+                              imageMessage ||
+                              locationMessage
+                                ? "p-2"
+                                : ""
+                            }`}
+                          >
+                            {msg.text}
+                          </p>
+                        )}
 
                         {msg.isEdited && (
                           <p
                             className={`text-xs mt-1 ${
-                              isMine
-                                ? "text-green-100"
-                                : "text-gray-400"
+                              isMine ? "text-green-100" : "text-gray-400"
                             }`}
                           >
                             Edited
                           </p>
                         )}
 
+                        {/* TEXT/FILE FOOTER TIMESTAMPS */}
                         {!imageMessage &&
-                          !videoMessage && 
-                          !locationMessage && (
+                          !videoMessage &&
+                          !locationMessage &&
+                          !audioMessage && (
                             <div
                               className={`text-xs mt-1 flex items-center justify-end gap-1 ${
-                                isMine
-                                  ? "text-green-100"
-                                  : "text-gray-400"
+                                isMine ? "text-green-100" : "text-gray-400"
                               }`}
                             >
                               <span>
-                                {new Date(
-                                  msg.createdAt
-                                ).toLocaleTimeString(
+                                {new Date(msg.createdAt).toLocaleTimeString(
                                   [],
-                                  {
-                                    hour: "2-digit",
-                                    minute:
-                                      "2-digit",
-                                  }
+                                  { hour: "2-digit", minute: "2-digit" }
                                 )}
                               </span>
 
@@ -1829,9 +1651,7 @@ function Chat() {
                                       : "text-green-100"
                                   } tracking-[-3px]`}
                                 >
-                                  {msg.isDelivered
-                                    ? "✓✓"
-                                    : "✓"}
+                                  {msg.isDelivered ? "✓✓" : "✓"}
                                 </span>
                               )}
                             </div>
@@ -1842,9 +1662,7 @@ function Chat() {
                 );
               })}
 
-              <div
-                ref={messagesEndRef}
-              />
+              <div ref={messagesEndRef} />
             </div>
           )}
         </main>
@@ -1852,15 +1670,11 @@ function Chat() {
         {showScrollButton && (
           <button
             type="button"
-            onClick={() =>
-              scrollToBottom(true)
-            }
+            onClick={() => scrollToBottom(true)}
             className="absolute bottom-4 right-6 w-10 h-10 rounded-full bg-white shadow-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-100 transition z-20"
             title="Scroll to latest message"
           >
-            <ChevronDown
-              size={21}
-            />
+            <ChevronDown size={21} />
           </button>
         )}
       </div>
@@ -1869,15 +1683,11 @@ function Chat() {
         <div className="max-w-3xl mx-auto">
           {selectedFile && (
             <div className="mb-2 bg-gray-100 rounded-xl p-3">
-              {selectedFile.type.startsWith(
-                "image/"
-              ) ? (
+              {selectedFile.type.startsWith("image/") ? (
                 <div className="relative w-fit">
                   {selectedFilePreview && (
                     <img
-                      src={
-                        selectedFilePreview
-                      }
+                      src={selectedFilePreview}
                       alt="Selected"
                       className="max-w-xs max-h-60 rounded-xl object-cover"
                     />
@@ -1885,24 +1695,17 @@ function Chat() {
 
                   <button
                     type="button"
-                    onClick={
-                      removeSelectedFile
-                    }
+                    onClick={removeSelectedFile}
                     className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition"
-                    title="Remove photo"
                   >
                     <X size={18} />
                   </button>
                 </div>
-              ) : selectedFile.type.startsWith(
-                  "video/"
-                ) ? (
+              ) : selectedFile.type.startsWith("video/") ? (
                 <div className="relative w-fit">
                   {selectedFilePreview && (
                     <video
-                      src={
-                        selectedFilePreview
-                      }
+                      src={selectedFilePreview}
                       controls
                       className="max-w-xs max-h-60 rounded-xl bg-black"
                     />
@@ -1910,11 +1713,8 @@ function Chat() {
 
                   <button
                     type="button"
-                    onClick={
-                      removeSelectedFile
-                    }
+                    onClick={removeSelectedFile}
                     className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition"
-                    title="Remove video"
                   >
                     <X size={18} />
                   </button>
@@ -1922,33 +1722,20 @@ function Chat() {
               ) : (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <FileText
-                      size={18}
-                      className="text-gray-500 shrink-0"
-                    />
-
+                    <FileText size={18} className="text-gray-500 shrink-0" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">
                         {selectedFile.name}
                       </p>
-
                       <p className="text-xs text-gray-500">
-                        {(
-                          selectedFile.size /
-                          1024
-                        ).toFixed(
-                          1
-                        )}{" "}
-                        KB
+                        {(selectedFile.size / 1024).toFixed(1)} KB
                       </p>
                     </div>
                   </div>
 
                   <button
                     type="button"
-                    onClick={
-                      removeSelectedFile
-                    }
+                    onClick={removeSelectedFile}
                     className="w-8 h-8 rounded-full hover:bg-gray-200 flex items-center justify-center"
                   >
                     <X size={18} />
@@ -1958,257 +1745,238 @@ function Chat() {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          {isRecordingAudio && (
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  setShowEmojiPicker(
-                    (prev) => !prev
-                  )
-                }
-                className="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-gray-200 transition"
-                title="Emoji"
+                onClick={discardAudioRecording}
+                className="w-12 h-12 rounded-xl bg-gray-100 text-red-500 flex items-center justify-center hover:bg-gray-200 transition"
               >
-                😊
+                <Trash size={20} />
               </button>
 
-              {showEmojiPicker && (
-                <div className="absolute bottom-14 left-0 z-50">
-                  <EmojiPicker
-                    onEmojiClick={
-                      handleEmojiClick
-                    }
-                    width={320}
-                    height={400}
-                  />
-                </div>
-              )}
-            </div>
+              <div className="flex-1 flex items-center gap-2 bg-gray-100 rounded-xl px-4 py-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-sm text-gray-700 font-medium">
+                  {formatRecordingTime(audioRecordingSeconds)}
+                </span>
+                <span className="text-sm text-gray-400">
+                  Recording voice message...
+                </span>
+              </div>
 
-            <div className="relative">
               <button
                 type="button"
-                onClick={() =>
-                  setShowAttachMenu(
-                    (prev) => !prev
-                  )
-                }
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
-                  showAttachMenu
-                    ? "bg-gray-200 text-gray-800"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-                title="Attach"
-              >
-                <Paperclip
-                  size={20}
-                />
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={
-                  handleFileChange
-                }
-                accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.avi,.mkv"
-              />
-
-              <input
-                ref={documentInputRef}
-                type="file"
-                className="hidden"
-                onChange={
-                  handleFileChange
-                }
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.zip"
-              />
-
-              {showAttachMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() =>
-                      setShowAttachMenu(
-                        false
-                      )
-                    }
-                  />
-
-                  <div className="absolute bottom-14 left-0 z-50 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(
-                          false
-                        );
-
-                        fileInputRef.current?.click();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <ImageIcon
-                        size={18}
-                        className="text-gray-500"
-                      />
-
-                      Photo &amp; video
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(
-                          false
-                        );
-
-                        openCamera(
-                          "photo"
-                        );
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <Camera
-                        size={18}
-                        className="text-gray-500"
-                      />
-
-                      Take photo
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(
-                          false
-                        );
-
-                        openCamera(
-                          "video"
-                        );
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <Video
-                        size={18}
-                        className="text-gray-500"
-                      />
-
-                      Record video
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAttachMenu(
-                          false
-                        );
-
-                        documentInputRef.current?.click();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <FileText
-                        size={18}
-                        className="text-gray-500"
-                      />
-
-                      Document
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSendLocation}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
-                    >
-                      <MapPin
-                        size={18}
-                        className="text-gray-500"
-                      />
-
-                      Location
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <input
-              type="text"
-              value={message}
-              onChange={(e) =>
-                setMessage(
-                  e.target.value
-                )
-              }
-              onKeyDown={handleKeyDown}
-              placeholder={
-                editingMessageId
-                  ? "Edit your message..."
-                  : "Type a message..."
-              }
-              className="flex-1 bg-gray-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-500"
-            />
-
-            {editingMessageId ? (
-              <>
-                <button
-                  type="button"
-                  onClick={
-                    cancelEditingMessage
-                  }
-                  className="w-12 h-12 rounded-xl bg-gray-200 text-gray-600 flex items-center justify-center hover:bg-gray-300 transition"
-                  title="Cancel edit"
-                >
-                  <X size={20} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={
-                    handleEditMessage
-                  }
-                  disabled={
-                    !message.trim()
-                  }
-                  className="px-4 h-12 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Update
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={
-                  handleSendMessage
-                }
-                disabled={
-                  (!message.trim() &&
-                    !selectedFile) ||
-                  sending
-                }
-                className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={confirmAudioRecording}
+                className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition"
               >
                 <Send size={20} />
               </button>
-            )}
-          </div>
+            </div>
+          )}
+
+          {!isRecordingAudio && (
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker((prev) => !prev)}
+                  className="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-gray-200 transition"
+                >
+                  😊
+                </button>
+
+                {showEmojiPicker && (
+                  <div className="absolute bottom-14 left-0 z-[2000]">
+                    <EmojiPicker
+                      onEmojiClick={handleEmojiClick}
+                      width={320}
+                      height={400}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowAttachMenu((prev) => !prev)}
+                  className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
+                    showAttachMenu
+                      ? "bg-gray-200 text-gray-800"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  <Paperclip size={20} />
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.avi,.mkv"
+                />
+
+                <input
+                  ref={documentInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.zip"
+                />
+
+                {showAttachMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowAttachMenu(false)}
+                    />
+
+                    <div className="absolute bottom-14 left-0 z-50 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          fileInputRef.current?.click();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        <ImageIcon size={18} className="text-gray-500" />
+                        Photo &amp; video
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          openCamera("photo");
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        <Camera size={18} className="text-gray-500" />
+                        Take photo
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          openCamera("video");
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        <Video size={18} className="text-gray-500" />
+                        Record video
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttachMenu(false);
+                          documentInputRef.current?.click();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        <FileText size={18} className="text-gray-500" />
+                        Document
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSendLocation}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition"
+                      >
+                        <MapPin size={18} className="text-gray-500" />
+                        Location
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  editingMessageId
+                    ? "Edit your message..."
+                    : "Type a message..."
+                }
+                className="flex-1 bg-gray-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-green-500"
+              />
+
+              {editingMessageId ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={cancelEditingMessage}
+                    className="w-12 h-12 rounded-xl bg-gray-200 text-gray-600 flex items-center justify-center hover:bg-gray-300 transition"
+                  >
+                    <X size={20} />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleEditMessage}
+                    disabled={!message.trim()}
+                    className="px-4 h-12 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition disabled:opacity-50"
+                  >
+                    Update
+                  </button>
+                </>
+              ) : message.trim() || selectedFile ? (
+                <button
+                  type="button"
+                  onClick={handleSendMessage}
+                  disabled={sending}
+                  className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition disabled:opacity-50"
+                >
+                  <Send size={20} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startAudioRecording}
+                  className="w-12 h-12 rounded-xl bg-green-500 text-white flex items-center justify-center hover:bg-green-600 transition"
+                >
+                  <Mic size={20} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
+      {showShareLocationModal && (
+        <ShareLocationModal
+          onSelect={sendLocationWithOptions}
+          onClose={() => setShowShareLocationModal(false)}
+        />
+      )}
+
+      {locationPreview && (
+        <LocationPreviewModal
+          latitude={locationPreview.latitude}
+          longitude={locationPreview.longitude}
+          isLive={locationPreview.isLive}
+          durationMinutes={locationPreview.durationMinutes}
+          onConfirm={confirmSendLocation}
+          onCancel={cancelLocationPreview}
+          sending={sendingLocation}
+        />
+      )}
+
       {showDeleteModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-          onClick={
-            handleDeleteCancel
-          }
+          className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/40 px-4"
+          onClick={handleDeleteCancel}
         >
           <div
             className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-5"
-            onClick={(e) =>
-              e.stopPropagation()
-            }
+            onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Delete message
@@ -2216,16 +1984,11 @@ function Chat() {
 
             <div className="space-y-2">
               {(() => {
-                const selectedMessage =
-                  messages.find(
-                    (msg) =>
-                      msg._id ===
-                      deleteMessageId
-                  );
+                const selectedMessage = messages.find(
+                  (msg) => msg._id === deleteMessageId
+                );
 
-                if (!selectedMessage) {
-                  return null;
-                }
+                if (!selectedMessage) return null;
 
                 const messageSenderId =
                   selectedMessage.sender?._id?.toString() ||
@@ -2235,20 +1998,14 @@ function Chat() {
                   currentUser?._id?.toString() ||
                   currentUser?.id?.toString();
 
-                const isMine =
-                  messageSenderId ===
-                  currentUserId;
+                const isMine = messageSenderId === currentUserId;
 
                 return (
                   <>
                     {isMine && (
                       <button
                         type="button"
-                        onClick={() =>
-                          handleDeleteConfirm(
-                            "everyone"
-                          )
-                        }
+                        onClick={() => handleDeleteConfirm("everyone")}
                         className="w-full rounded-xl px-4 py-3 text-left text-red-600 font-medium hover:bg-red-50 transition"
                       >
                         Delete for everyone
@@ -2257,21 +2014,14 @@ function Chat() {
 
                     <button
                       type="button"
-                      onClick={() =>
-                        handleDeleteConfirm(
-                          "me"
-                        )
-                      }
+                      onClick={() => handleDeleteConfirm("me")}
                       className="w-full rounded-xl px-4 py-3 text-left text-gray-700 font-medium hover:bg-gray-100 transition"
                     >
                       Delete for me
                     </button>
-
                     <button
                       type="button"
-                      onClick={
-                        handleDeleteCancel
-                      }
+                      onClick={handleDeleteCancel}
                       className="w-full rounded-xl px-4 py-3 text-left text-gray-500 font-medium hover:bg-gray-100 transition"
                     >
                       Cancel
@@ -2285,58 +2035,27 @@ function Chat() {
       )}
 
       {showCamera && (
-        <div className="fixed inset-0 z-[100] bg-black">
+        <div className="fixed inset-0 z-[3000] bg-black">
           <div className="relative w-full h-full bg-black flex flex-col">
             <div className="absolute top-0 left-0 right-0 z-20 px-5 py-5 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent">
               <div>
                 <h2 className="text-white text-lg font-semibold">
-                  {cameraMode ===
-                  "video"
-                    ? "Record Video"
-                    : "Take Photo"}
+                  {cameraMode === "video" ? "Record Video" : "Take Photo"}
                 </h2>
-
-                <p className="text-white/70 text-xs mt-1">
-                  {cameraMode ===
-                  "video"
-                    ? isRecording
-                      ? "Recording..."
-                      : "Tap the button to start recording"
-                    : "Position yourself and capture a photo"}
-                </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                {cameraMode ===
-                  "video" &&
-                  isRecording && (
-                    <span className="flex items-center gap-2 bg-red-600/90 text-white text-sm font-medium px-3 py-1.5 rounded-full">
-                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-
-                      {formatRecordingTime(
-                        recordingSeconds
-                      )}
-                    </span>
-                  )}
-
-                <button
-                  type="button"
-                  onClick={
-                    closeCamera
-                  }
-                  className="w-11 h-11 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
-                  title="Close camera"
-                >
-                  <X size={23} />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="w-11 h-11 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition"
+              >
+                <X size={23} />
+              </button>
             </div>
 
             <div className="flex-1 flex items-center justify-center bg-black overflow-hidden">
               <video
-                ref={
-                  cameraVideoRef
-                }
+                ref={cameraVideoRef}
                 autoPlay
                 playsInline
                 muted
@@ -2345,36 +2064,23 @@ function Chat() {
             </div>
 
             <div className="absolute bottom-0 left-0 right-0 z-20 flex items-center justify-center pb-10 pt-16 bg-gradient-to-t from-black/90 via-black/40 to-transparent">
-              {cameraMode ===
-              "video" ? (
+              {cameraMode === "video" ? (
                 <button
                   type="button"
-                  onClick={
-                    isRecording
-                      ? stopRecording
-                      : startRecording
-                  }
-                  className="w-20 h-20 rounded-full bg-white border-[5px] border-white/50 shadow-xl hover:scale-105 active:scale-95 transition flex items-center justify-center"
-                  title={
-                    isRecording
-                      ? "Stop recording"
-                      : "Start recording"
-                  }
+                  onClick={isRecording ? stopRecording : startRecording}
+                  className="w-20 h-20 rounded-full bg-white border-[5px] border-white/50 shadow-xl flex items-center justify-center"
                 >
                   {isRecording ? (
                     <span className="w-8 h-8 rounded-md bg-red-600" />
                   ) : (
-                    <span className="w-16 h-16 rounded-full bg-red-600 border border-red-700" />
+                    <span className="w-16 h-16 rounded-full bg-red-600" />
                   )}
                 </button>
               ) : (
                 <button
                   type="button"
-                  onClick={
-                    capturePhoto
-                  }
-                  className="w-20 h-20 rounded-full bg-white border-[5px] border-white/50 shadow-xl hover:scale-105 active:scale-95 transition flex items-center justify-center"
-                  title="Capture photo"
+                  onClick={capturePhoto}
+                  className="w-20 h-20 rounded-full bg-white border-[5px] border-white/50 shadow-xl flex items-center justify-center"
                 >
                   <span className="w-16 h-16 rounded-full bg-white border border-gray-300" />
                 </button>

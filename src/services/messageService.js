@@ -45,7 +45,9 @@ export const sendLocationMessage = async (
   receiver,
   latitude,
   longitude,
-  token
+  token,
+  isLive = false,
+  liveDurationMinutes = null
 ) => {
   const response = await api.post(
     "/messages/location",
@@ -53,7 +55,8 @@ export const sendLocationMessage = async (
       receiver,
       latitude,
       longitude,
-      isLive: false,
+      isLive,
+      liveDurationMinutes,
     },
     {
       headers: {
@@ -61,8 +64,9 @@ export const sendLocationMessage = async (
       },
     }
   );
+
   return response.data;
-}
+};
 
 export const deleteMessage = async (
   messageId,

@@ -18,8 +18,14 @@ function LocationMap({
   expiresAt,
   isMine,
   onStopSharing,
+  time,
 }) {
   const [timeLeftLabel, setTimeLeftLabel] = useState("");
+  const [locallyExpired, setLocallyExpired] = useState(false);
+
+  useEffect(() => {
+    setLocallyExpired(false);
+  }, [expiresAt]);
 
   useEffect(() => {
     if (!isLive || !expiresAt) {
@@ -31,7 +37,8 @@ function LocationMap({
       const msLeft = new Date(expiresAt).getTime() - Date.now();
 
       if (msLeft <= 0) {
-        setTimeLeftLabel("Ending...");
+        setTimeLeftLabel("");
+        setLocallyExpired(true);
         return;
       }
 
@@ -49,10 +56,12 @@ function LocationMap({
     };
 
     update();
-    const interval = setInterval(update, 30000);
+    const interval = setInterval(update, 10000);
 
     return () => clearInterval(interval);
   }, [isLive, expiresAt]);
+
+  const effectivelyLive = isLive && !locallyExpired;
 
   const googleMapsUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
 
@@ -84,28 +93,33 @@ function LocationMap({
           <Marker position={[latitude, longitude]} icon={defaultIcon} />
         </MapContainer>
 
-        {isLive && (
+        {effectivelyLive && (
           <span className="absolute top-2 left-2 bg-green-600 text-white text-xs font-medium px-2 py-1 rounded-full flex items-center gap-1 z-[1000]">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
             Live
+          </span>
+        )}
+        {time && (
+          <span className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-full z-[1000]">
+            {time}
           </span>
         )}
       </div>
 
       <div className="bg-white px-3 py-2">
         <p className="text-sm font-medium text-gray-800">
-          {isLive ? "Live location" : "Location"}
+          {effectivelyLive ? "Live location" : "Location"}
         </p>
 
-        {isLive && timeLeftLabel && (
+        {effectivelyLive && timeLeftLabel && (
           <p className="text-xs text-gray-500">{timeLeftLabel}</p>
         )}
 
-        {!isLive && (
+        {!effectivelyLive && (
           <p className="text-xs text-blue-500">Open in Google Maps</p>
         )}
 
-        {isLive && isMine && (
+        {effectivelyLive && isMine && (
           <button
             type="button"
             onClick={(e) => {
