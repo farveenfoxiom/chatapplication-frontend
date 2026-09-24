@@ -50,7 +50,7 @@ import {
   setUserStatus,
 } from "../redux/slices/presenceSlice";
 
-const API_BASE_URL = "http://localhost:5000";
+import { API_BASE_URL, SOCKET_URL } from "../config"; 
 
 const AudioPlayer = ({
   src,

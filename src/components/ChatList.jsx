@@ -28,17 +28,16 @@ import {
 
 import {
   setGroups,
+  refreshGroups,
   addGroup,
   groupUpdated,
   groupMessageReceived,
   memberLeftGroup,
   groupLastMessageEdited,
-  groupLastMessageDeleted,
 } from "../redux/slices/groupSlice";
 
 import socket from "../socket/socket";
-
-const API_BASE_URL = "http://localhost:5000";
+import { API_BASE_URL, SOCKET_URL } from "../config";
 
 function getImageUrl(image) {
   if (!image) return "";
@@ -79,9 +78,7 @@ function ChatList() {
     if (message.messageType === "video") return "🎥 Video";
     if (message.messageType === "audio") return "🎤 Voice message";
     if (message.messageType === "location") {
-      return message.location?.isLive
-      ? "📍 Live location"
-      : "📍 location";
+      return message.location?.isLive ? "📍 Live location" : "📍 Location";
     }
 
     if (message.messageType === "file") {
@@ -92,6 +89,7 @@ function ChatList() {
       const extension = message.fileName.split(".").pop()?.toLowerCase();
 
       const imageExtensions = ["jpg", "jpeg", "png", "webp", "gif"];
+      const audioExtensions = ["mp3", "wav", "ogg", "m4a", "aac"];
       const videoExtensions = ["mp4", "webm", "mov", "avi", "mkv"];
 
       if (imageExtensions.includes(extension)) return "📷 Photo";
@@ -161,8 +159,7 @@ function ChatList() {
 
       if (groupId) {
         const senderId =
-          newMessage.sender?._id?.toString() ||
-          newMessage.sender?.toString();
+          newMessage.sender?._id?.toString() || newMessage.sender?.toString();
 
         const isMine = senderId === currentUserId;
 
@@ -173,15 +170,14 @@ function ChatList() {
         if (!existingGroup) {
           return;
         }
+
         let message = newMessage;
 
-        if (
-          senderId &&
-          typeof newMessage.sender !== "object"
-        ) {
+        // If the sender arrives as a bare id, fetch their name for the preview
+        if (senderId && typeof newMessage.sender !== "object") {
           try {
-            const data = await getUserById(senderId, token);
-            const sender = data.user || data;
+            const senderData = await getUserById(senderId, token);
+            const sender = senderData.user || senderData;
 
             message = {
               ...newMessage,
@@ -191,10 +187,11 @@ function ChatList() {
             console.error("Failed to fetch group message sender:", error);
           }
         }
+
         dispatch(
           groupMessageReceived({
             groupId,
-            message: newMessage,
+            message,
             incrementUnread: !isMine,
           })
         );
@@ -203,29 +200,26 @@ function ChatList() {
       }
 
       const senderId =
-        newMessage.sender?._id?.toString() ||
-        newMessage.sender?.toString();
+        newMessage.sender?._id?.toString() || newMessage.sender?.toString();
 
       const receiverId =
         newMessage.receiver?._id?.toString() ||
         newMessage.receiver?.toString();
 
-      const otherUserId =
-        senderId === currentUserId ? receiverId : senderId;
+      const otherUserId = senderId === currentUserId ? receiverId : senderId;
 
       if (!otherUserId) {
         return;
       }
 
       const existingChat = chatsRef.current.find(
-        (chat) =>
-          chat.user._id.toString() === otherUserId.toString()
+        (chat) => chat.user._id.toString() === otherUserId.toString()
       );
 
       if (!existingChat) {
         try {
-          const data = await getUserById(otherUserId, token);
-          const user = data.user || data;
+          const userData = await getUserById(otherUserId, token);
+          const user = userData.user || userData;
 
           dispatch(
             addChat({
@@ -284,8 +278,7 @@ function ChatList() {
         updatedMessage.receiver?._id?.toString() ||
         updatedMessage.receiver?.toString();
 
-      const otherUserId =
-        senderId === currentUserId ? receiverId : senderId;
+      const otherUserId = senderId === currentUserId ? receiverId : senderId;
 
       if (!otherUserId) {
         return;
@@ -303,43 +296,39 @@ function ChatList() {
     };
 
     const handleMessageDeleted = async (data) => {
-      const { messageId, deleteFor, sender, receiver, group , wasUnread} = data;
+      const { messageId, deleteFor, sender, receiver, group } = data || {};
 
       if (!messageId || !deleteFor) {
         return;
       }
 
-      const groupId =
-        group?._id?.toString() || group?.toString();
+      const groupId = group?._id?.toString() || group?.toString();
 
       if (groupId) {
-        dispatch(
-          groupLastMessageDeleted({
-            groupId,
-            messageId,
-            wasUnread:true,
-          })
-        );
+        // Ask the server for the real last message + unread count
+        try {
+          const groupData = await getUserGroups(token);
+          dispatch(refreshGroups(groupData.groups || []));
+        } catch (error) {
+          console.error("Failed to refresh groups after delete:", error);
+        }
 
         return;
       }
 
-      const senderId =
-        sender?._id?.toString() || sender?.toString();
+      const senderId = sender?._id?.toString() || sender?.toString();
 
-      const receiverId =
-        receiver?._id?.toString() || receiver?.toString();
+      const receiverId = receiver?._id?.toString() || receiver?.toString();
 
-      const otherUserId =
-        senderId === currentUserId ? receiverId : senderId;
+      const otherUserId = senderId === currentUserId ? receiverId : senderId;
 
       if (!otherUserId) {
         return;
       }
 
       try {
-        const data = await getChatPreview(otherUserId, token);
-        const preview = data.preview;
+        const previewData = await getChatPreview(otherUserId, token);
+        const preview = previewData.preview;
 
         dispatch(
           updateChat({
@@ -352,10 +341,7 @@ function ChatList() {
           })
         );
       } catch (error) {
-        console.error(
-          "Failed to refresh chat preview:",
-          error
-        );
+        console.error("Failed to refresh chat preview:", error);
       }
     };
 
@@ -444,9 +430,7 @@ function ChatList() {
   };
 
   const handleDeleteChat = async (userId) => {
-    const confirmed = window.confirm(
-      "Delete this chat from your recent chats?"
-    );
+    const confirmed = window.confirm("Delete this chat from your recent chats?");
 
     if (!confirmed) return;
 
@@ -457,43 +441,24 @@ function ChatList() {
     } catch (error) {
       console.error("Delete chat error:", error);
 
-      alert(
-        error.response?.data?.message ||
-          "Failed to delete chat"
-      );
+      alert(error.response?.data?.message || "Failed to delete chat");
     }
   };
 
-  const contactsForNewGroup = chats.map(
-    (chat) => chat.user
-  );
+  const contactsForNewGroup = chats.map((chat) => chat.user);
 
   const tabs = [
-    {
-      id: "all",
-      label: "All",
-    },
-    {
-      id: "unread",
-      label: "Unread",
-    },
-    {
-      id: "contacts",
-      label: "Contacts",
-    },
-    {
-      id: "groups",
-      label: "Groups",
-    },
+    { id: "all", label: "All" },
+    { id: "unread", label: "Unread" },
+    { id: "contacts", label: "Contacts" },
+    { id: "groups", label: "Groups" },
   ];
 
   return (
     <aside className="w-full md:w-96 border-r border-gray-200 bg-white flex flex-col">
       <div className="p-4 pb-2">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">
-            Chats
-          </h2>
+          <h2 className="text-xl font-bold text-gray-900">Chats</h2>
 
           <button
             type="button"
@@ -506,10 +471,7 @@ function ChatList() {
           </button>
         </div>
 
-        <SearchBar
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <SearchBar value={search} onChange={(e) => setSearch(e.target.value)} />
 
         <div className="flex items-center gap-2 mt-4 overflow-x-auto pb-1 scrollbar-hide">
           {tabs.map((tab) => {
@@ -535,173 +497,140 @@ function ChatList() {
 
       <div className="flex-1 overflow-y-auto px-2 pb-4">
         {loading && (
-          <p className="text-center text-gray-400 mt-8">
-            Loading chats...
-          </p>
+          <p className="text-center text-gray-400 mt-8">Loading chats...</p>
         )}
 
         {!loading && error && (
-          <p className="text-center text-red-500 mt-8">
-            {error}
+          <p className="text-center text-red-500 mt-8">{error}</p>
+        )}
+
+        {!loading && !error && combinedItems.length === 0 && (
+          <p className="text-center text-gray-400 mt-8">
+            {activeTab === "unread"
+              ? "No unread chats"
+              : activeTab === "contacts"
+              ? "No contacts found"
+              : activeTab === "groups"
+              ? "No groups found"
+              : "No chats found"}
           </p>
         )}
 
-        {!loading &&
-          !error &&
-          combinedItems.length === 0 && (
-            <p className="text-center text-gray-400 mt-8">
-              {activeTab === "unread"
-                ? "No unread chats"
-                : activeTab === "contacts"
-                ? "No contacts found"
-                : activeTab === "groups"
-                ? "No groups found"
-                : "No chats found"}
-            </p>
-          )}
-
-        {!loading &&
-          !error &&
-          combinedItems.length > 0 && (
-            <div>
-              {combinedItems.map((item) => {
-                if (item.type === "chat") {
-                  const chat = item.data;
-
-                  return (
-                    <ChatItem
-                      key={`chat-${chat.user._id}`}
-                      chat={{
-                        id: chat.user._id,
-                        name: chat.user.name,
-                        username: chat.user.username,
-                        message: chat.lastMessage,
-                        time: new Date(
-                          chat.lastMessageTime
-                        ).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }),
-                        unreadCount: chat.unreadCount,
-                        profileImage:
-                          chat.user.profileImage,
-                      }}
-                      onClick={() =>
-                        handleChatClick(
-                          chat.user._id
-                        )
-                      }
-                      onDelete={
-                        handleDeleteChat
-                      }
-                    />
-                  );
-                }
-
-                const group = item.data;
+        {!loading && !error && combinedItems.length > 0 && (
+          <div>
+            {combinedItems.map((item) => {
+              if (item.type === "chat") {
+                const chat = item.data;
 
                 return (
-                  <button
-                    key={`group-${group._id}`}
-                    type="button"
-                    onClick={() =>
-                      handleGroupClick(
-                        group._id
-                      )
-                    }
-                    className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 transition text-left"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
-                      {group.groupImage ? (
-                        <img
-                          src={getImageUrl(
-                            group.groupImage
-                          )}
-                          alt={group.name}
-                          className="w-12 h-12 rounded-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display =
-                              "none";
-
-                            if (
-                              e.currentTarget
-                                .nextElementSibling
-                            ) {
-                              e.currentTarget.nextElementSibling.style.display =
-                                "flex";
-                            }
-                          }}
-                        />
-                      ) : null}
-
-                      <div
-                        className={`w-12 h-12 rounded-full bg-green-100 items-center justify-center ${
-                          group.groupImage
-                            ? "hidden"
-                            : "flex"
-                        }`}
-                      >
-                        <Users
-                          size={20}
-                          className="text-green-600"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium text-gray-900 truncate">
-                          {group.name}
-                        </p>
-
-                        {group.lastMessageTime && (
-                          <span className="text-xs text-gray-400 shrink-0">
-                            {new Date(
-                              group.lastMessageTime
-                            ).toLocaleTimeString(
-                              [],
-                              {
-                                hour: "2-digit",
-                                minute:
-                                  "2-digit",
-                              }
-                            )}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <p className="text-sm text-gray-500 truncate">
-                          {group.lastMessage
-                            ? `${group.lastMessage.sender?._id?.toString() === currentUserId ? "You" : group.lastMessage.sender?.name || "Unknown"}: ${getMessagePreview(group.lastMessage)}`
-                            : `${group.members?.length || 0} members`}
-                        </p>
-
-                        {group.unreadCount >
-                          0 && (
-                          <span className="min-w-5 h-5 px-1.5 rounded-full bg-green-500 text-white text-xs flex items-center justify-center shrink-0">
-                            {group.unreadCount >
-                            99
-                              ? "99+"
-                              : group.unreadCount}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
+                  <ChatItem
+                    key={`chat-${chat.user._id}`}
+                    chat={{
+                      id: chat.user._id,
+                      name: chat.user.name,
+                      username: chat.user.username,
+                      message: chat.lastMessage,
+                      time: new Date(chat.lastMessageTime).toLocaleTimeString(
+                        [],
+                        {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }
+                      ),
+                      unreadCount: chat.unreadCount,
+                      profileImage: chat.user.profileImage,
+                    }}
+                    onClick={() => handleChatClick(chat.user._id)}
+                    onDelete={handleDeleteChat}
+                  />
                 );
-              })}
-            </div>
-          )}
+              }
+
+              const group = item.data;
+
+              return (
+                <button
+                  key={`group-${group._id}`}
+                  type="button"
+                  onClick={() => handleGroupClick(group._id)}
+                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 transition text-left"
+                >
+                  <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
+                    {group.groupImage ? (
+                      <img
+                        src={getImageUrl(group.groupImage)}
+                        alt={group.name}
+                        className="w-12 h-12 rounded-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+
+                          if (e.currentTarget.nextElementSibling) {
+                            e.currentTarget.nextElementSibling.style.display =
+                              "flex";
+                          }
+                        }}
+                      />
+                    ) : null}
+
+                    <div
+                      className={`w-12 h-12 rounded-full bg-green-100 items-center justify-center ${
+                        group.groupImage ? "hidden" : "flex"
+                      }`}
+                    >
+                      <Users size={20} className="text-green-600" />
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-gray-900 truncate">
+                        {group.name}
+                      </p>
+
+                      {group.lastMessageTime && (
+                        <span className="text-xs text-gray-400 shrink-0">
+                          {new Date(group.lastMessageTime).toLocaleTimeString(
+                            [],
+                            {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            }
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <p className="text-sm text-gray-500 truncate">
+                        {group.lastMessage
+                          ? `${
+                              group.lastMessage.sender?._id?.toString() ===
+                              currentUserId
+                                ? "You"
+                                : group.lastMessage.sender?.name || "Unknown"
+                            }: ${getMessagePreview(group.lastMessage)}`
+                          : `${group.members?.length || 0} members`}
+                      </p>
+
+                      {group.unreadCount > 0 && (
+                        <span className="min-w-5 h-5 px-1.5 rounded-full bg-green-500 text-white text-xs flex items-center justify-center shrink-0">
+                          {group.unreadCount > 99 ? "99+" : group.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {showCreateGroup && (
         <CreateGroupModal
           users={contactsForNewGroup}
           token={token}
-          onClose={() =>
-            setShowCreateGroup(false)
-          }
+          onClose={() => setShowCreateGroup(false)}
         />
       )}
     </aside>

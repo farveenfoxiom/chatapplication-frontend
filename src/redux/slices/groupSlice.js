@@ -6,10 +6,13 @@ const initialState = {
   error: "",
 };
 
+const toTime = (value) => (value ? new Date(value).getTime() : 0);
+
 const groupSlice = createSlice({
   name: "group",
   initialState,
   reducers: {
+    // Initial load: don't let a stale response overwrite a newer socket update
     setGroups: (state, action) => {
       const fetchedGroups = action.payload;
 
@@ -22,19 +25,37 @@ const groupSlice = createSlice({
           return fetchedGroup;
         }
 
-        const existingTime = existing.lastMessageTime
-          ? new Date(existing.lastMessageTime).getTime()
-          : 0;
-
-        const fetchedTime = fetchedGroup.lastMessageTime
-          ? new Date(fetchedGroup.lastMessageTime).getTime()
-          : 0;
-
-        if (existingTime > fetchedTime) {
+        if (toTime(existing.lastMessageTime) > toTime(fetchedGroup.lastMessageTime)) {
           return existing;
         }
 
         return fetchedGroup;
+      });
+    },
+
+    // After a message is deleted: the server is the source of truth
+    refreshGroups: (state, action) => {
+      const fetchedGroups = action.payload || [];
+
+      state.groups = fetchedGroups.map((fetched) => {
+        const existing = state.groups.find(
+          (g) => g._id.toString() === fetched._id.toString()
+        );
+
+        const next = {
+          ...fetched,
+          lastMessage: fetched.lastMessage || null,
+          unreadCount: fetched.unreadCount || 0,
+        };
+
+        // Cleared chat: keep the time the row had when it was cleared
+        if (!next.lastMessage && existing && !existing.lastMessage) {
+          if (toTime(existing.lastMessageTime) > toTime(next.lastMessageTime)) {
+            next.lastMessageTime = existing.lastMessageTime;
+          }
+        }
+
+        return next;
       });
     },
 
@@ -120,26 +141,6 @@ const groupSlice = createSlice({
       }
     },
 
-    groupLastMessageDeleted: (state, action) => {
-      const { groupId, messageId , wasUnread} = action.payload;
-
-      const group = state.groups.find(
-        (item) => item._id.toString() === groupId.toString()
-      );
-
-      if (!group) return;
-
-      if (
-        group.lastMessage &&
-        group.lastMessage._id?.toString() === messageId.toString()
-      ) {
-        group.lastMessage = null;
-      }
-      if(wasUnread && group.unreadCount > 0){
-        group.unreadCount -= 1;
-      }
-    },
-
     clearGroupUnread: (state, action) => {
       const groupId = action.payload;
 
@@ -172,6 +173,7 @@ const groupSlice = createSlice({
       );
     },
 
+    // Clearing the chat empties the preview but keeps the row where it was
     clearGroupChat: (state, action) => {
       const groupId = action.payload?.toString();
 
@@ -182,7 +184,7 @@ const groupSlice = createSlice({
       if (group) {
         group.unreadCount = 0;
         group.lastMessage = null;
-        group.lastMessageTime = null;
+        // lastMessageTime is kept on purpose
       }
     },
   },
@@ -190,6 +192,7 @@ const groupSlice = createSlice({
 
 export const {
   setGroups,
+  refreshGroups,
   addGroup,
   groupUpdated,
   groupMessageReceived,
@@ -197,7 +200,6 @@ export const {
   memberLeftGroup,
   removeGroup,
   groupLastMessageEdited,
-  groupLastMessageDeleted,
   clearGroupChat,
 } = groupSlice.actions;
 

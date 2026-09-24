@@ -25,7 +25,7 @@ import {
 } from "../services/groupService";
 import { searchUsers } from "../services/userService";
 
-const API_BASE_URL = "http://localhost:5000";
+import { API_BASE_URL, SOCKET_URL } from "../config"; 
 
 function getImageUrl(image) {
   if (!image) return "";

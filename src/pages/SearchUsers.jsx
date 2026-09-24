@@ -5,6 +5,8 @@ import { useNavigate } from "react-router-dom";
 import { searchUsers } from "../services/userService";
 import { useSelector } from "react-redux";
 
+import { API_BASE_URL, SOCKET_URL } from "../config"; 
+
 function SearchUsers() {
   const navigate = useNavigate();
   const token = useSelector((state) => state.auth.token);
@@ -147,7 +149,7 @@ function SearchUsers() {
                 <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center shrink-0">
                   {user.profileImage ? (
                     <img
-                      src={`http://localhost:5000${user.profileImage}`}
+                      src={`${API_BASE_URL}${user.profileImage}`}
                       alt={user.name}
                       className="w-12 h-12 rounded-full object-cover"/>
                   ) : (

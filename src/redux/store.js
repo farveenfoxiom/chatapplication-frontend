@@ -5,6 +5,7 @@ import chatReducer from "./slices/chatSlice";
 import messageReducer from "./slices/messageSlice";
 import presenceReducer from "./slices/presenceSlice";
 import groupReducer from "./slices/groupSlice";
+import groupMessageReducer from "./slices/groupMessageSlice";
 
 const store = configureStore({
   reducer: {
@@ -13,6 +14,7 @@ const store = configureStore({
     message: messageReducer,
     presence: presenceReducer,
     group: groupReducer,
+    groupMessage : groupMessageReducer,
   },
 });
 

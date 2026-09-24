@@ -40,19 +40,32 @@ import {
   groupUpdated,
   memberLeftGroup,
   clearGroupUnread,
-  removeGroup,
   clearGroupChat,
 } from "../redux/slices/groupSlice";
+import {
+  setGroupMessages,
+  addGroupMessage,
+  prependGroupMessages,
+  replaceGroupMessage,
+  removeGroupMessage,
+  clearGroupMessages,
+  updateGroupMessagePlayedBy,
+  markGroupMessagesReadByUser,
+  markGroupMessagesDeliveredToUser,
+  updateGroupMessageLocation,
+  stopGroupMessageLocation,
+  setGroupMessagesLoading,
+  setGroupMessageError,
+  setHasMoreGroupMessages,
+  setLoadingOlderGroupMessages,
+  resetGroupMessageState,
+} from "../redux/slices/groupMessageSlice";
 
-const API_BASE_URL = "http://localhost:5000";
+
+import { API_BASE_URL, SOCKET_URL } from "../config"; 
 const MESSAGE_LIMIT = 20;
 
-/* -------------------------------------------------------
-   AudioPlayer
-   Same voice-message style used by Chat.jsx, but adapted
-   for group messages. A group member is considered to have
-   played/read the audio when their id exists in playedBy/readBy.
-------------------------------------------------------- */
+
 const AudioPlayer = ({
   src,
   isMine,
@@ -133,7 +146,7 @@ const AudioPlayer = ({
     12, 20, 14, 28, 16, 24, 10, 18, 22, 14, 26, 12, 18, 24, 16, 22, 14, 20, 26,
   ];
 
-    return (
+  return (
     <div
       className={`relative flex items-center gap-3 w-[300px] max-w-full p-2.5 rounded-xl ${
         isMine
@@ -252,32 +265,24 @@ const AudioPlayer = ({
 };
 
 function GroupChat() {
-  console.log("GROUPCHAT FILE VERSION CHECK — audio + read recipients v4");
-
   const { groupId } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
-  const { token, user: currentUser } = useSelector(
-    (state) => state.auth
-  );
+  const { token, user: currentUser } = useSelector((state) => state.auth);
 
+  const { messages, loading, error, hasMoreMessages, loadingOlderMessages } =
+    useSelector((state) => state.groupMessage);
+
+  
   const [group, setGroup] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
   const [message, setMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [downloadedMessageIds, setDownloadedMessageIds] = useState(
-    new Set()
-  );
-
-  const [hasMoreMessages, setHasMoreMessages] = useState(true);
-  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [downloadedMessageIds, setDownloadedMessageIds] = useState(new Set());
 
   const fileInputRef = useRef(null);
   const documentInputRef = useRef(null);
@@ -337,8 +342,18 @@ function GroupChat() {
     currentUser?._id?.toString() || currentUser?.id?.toString();
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     hasMoreMessagesRef.current = hasMoreMessages;
   }, [hasMoreMessages]);
+
+  useEffect(() => {
+    return () => {
+      dispatch(resetGroupMessageState());
+    };
+  }, [dispatch]);
 
   const getId = (value) =>
     value?._id?.toString() || value?.id?.toString() || value?.toString();
@@ -360,10 +375,35 @@ function GroupChat() {
     });
   };
 
-  const hasOtherReaders = (msg) =>
-    getReadRecipients(msg).some(
-      (member) => getId(member) !== currentUserId
-    );
+  const getDeliveredIds = (msg) =>
+    (msg?.deliveredTo || []).map((item) => getId(item)).filter(Boolean);
+
+  // Everyone in the group except me (used for messages I sent)
+  const getRecipientIds = () =>
+    (group?.members || [])
+      .map((member) => getId(member))
+      .filter((id) => id && id !== currentUserId);
+
+  // "sent"      -> one grey tick
+  // "delivered" -> every member received it (double grey tick)
+  // "read"      -> every member read it (double blue tick)
+  const getTickStatus = (msg) => {
+    const recipientIds = getRecipientIds();
+
+    if (!recipientIds.length) return "sent";
+
+    const readIds = new Set(getReadIds(msg));
+    const deliveredIds = new Set(getDeliveredIds(msg));
+
+    if (recipientIds.every((id) => readIds.has(id))) return "read";
+
+    // reading a message also means it was delivered
+    if (recipientIds.every((id) => deliveredIds.has(id) || readIds.has(id))) {
+      return "delivered";
+    }
+
+    return "sent";
+  };
 
   const openReadRecipients = (msg) => {
     if (!msg || !currentUserId) return;
@@ -403,10 +443,7 @@ function GroupChat() {
   };
 
   const loadOlderMessages = useCallback(async () => {
-    if (
-      isLoadingOlderMessagesRef.current ||
-      !hasMoreMessagesRef.current
-    ) {
+    if (isLoadingOlderMessagesRef.current || !hasMoreMessagesRef.current) {
       return;
     }
 
@@ -421,7 +458,7 @@ function GroupChat() {
 
     try {
       isLoadingOlderMessagesRef.current = true;
-      setLoadingOlderMessages(true);
+      dispatch(setLoadingOlderGroupMessages(true));
 
       const oldScrollHeight = container.scrollHeight;
       const oldScrollTop = container.scrollTop;
@@ -437,24 +474,15 @@ function GroupChat() {
       const nextHasMore =
         messageData.hasMore ?? olderMessages.length === MESSAGE_LIMIT;
 
-      setHasMoreMessages(nextHasMore);
+      dispatch(setHasMoreGroupMessages(nextHasMore));
       hasMoreMessagesRef.current = nextHasMore;
 
       if (!olderMessages.length) return;
 
-      setMessages((prev) => {
-        const existingIds = new Set(prev.map((item) => item._id));
-        const uniqueOlderMessages = olderMessages.filter(
-          (item) => !existingIds.has(item._id)
-        );
+      // The reducer skips duplicates and puts older messages first
+      dispatch(prependGroupMessages(olderMessages));
 
-        if (!uniqueOlderMessages.length) return prev;
-
-        const updatedMessages = [...uniqueOlderMessages, ...prev];
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
-
+      
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const newScrollHeight = container.scrollHeight;
@@ -464,21 +492,22 @@ function GroupChat() {
       });
     } catch (err) {
       console.error("Load older group messages error:", err);
-      setError(
-        err.response?.data?.message || "Failed to load older messages"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to load older messages"
+        )
       );
     } finally {
       isLoadingOlderMessagesRef.current = false;
-      setLoadingOlderMessages(false);
+      dispatch(setLoadingOlderGroupMessages(false));
     }
-  }, [groupId, token]);
+  }, [groupId, token, dispatch]);
 
   const handleScroll = (e) => {
     const container = e.currentTarget;
     const { scrollTop, scrollHeight, clientHeight } = container;
 
-    const distanceFromBottom =
-      scrollHeight - scrollTop - clientHeight;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
 
     const isAtBottom = distanceFromBottom < 100;
 
@@ -491,12 +520,13 @@ function GroupChat() {
 
     const fetchGroupChat = async () => {
       try {
-        setLoading(true);
-        setError("");
-        setHasMoreMessages(true);
+        // reset first (it also sets loading: false), then start loading
+        dispatch(resetGroupMessageState());
+        dispatch(setGroupMessagesLoading(true));
+        dispatch(setGroupMessageError(""));
+
         hasMoreMessagesRef.current = true;
         messagesRef.current = [];
-        setMessages([]);
         isInitialLoadRef.current = true;
         isNearBottomRef.current = true;
         isLoadingOlderMessagesRef.current = false;
@@ -531,13 +561,12 @@ function GroupChat() {
           return msg;
         });
 
-        messagesRef.current = initialMessages;
-        setMessages(initialMessages);
+        dispatch(setGroupMessages(initialMessages));
 
         const nextHasMore =
           messageData.hasMore ?? initialMessages.length === MESSAGE_LIMIT;
 
-        setHasMoreMessages(nextHasMore);
+        dispatch(setHasMoreGroupMessages(nextHasMore));
         hasMoreMessagesRef.current = nextHasMore;
 
         socket.emit("join_group", groupId);
@@ -545,11 +574,13 @@ function GroupChat() {
         if (!isMounted) return;
 
         console.error("Failed to load group chat:", err);
-        setError(
-          err.response?.data?.message || "Failed to load group chat"
+        dispatch(
+          setGroupMessageError(
+            err.response?.data?.message || "Failed to load group chat"
+          )
         );
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) dispatch(setGroupMessagesLoading(false));
       }
     };
 
@@ -568,8 +599,7 @@ function GroupChat() {
       if (!newMessage) return;
 
       const messageGroupId =
-        newMessage.group?._id?.toString() ||
-        newMessage.group?.toString();
+        newMessage.group?._id?.toString() || newMessage.group?.toString();
 
       if (messageGroupId !== groupId) return;
 
@@ -603,17 +633,8 @@ function GroupChat() {
         }
       }
 
-      setMessages((prev) => {
-        const alreadyExists = prev.some(
-          (m) => m._id === messageWithSender._id
-        );
-
-        if (alreadyExists) return prev;
-
-        const updatedMessages = [...prev, messageWithSender];
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      // The reducer ignores duplicates (e.g. my own message echoed back)
+      dispatch(addGroupMessage(messageWithSender));
     };
 
     const handleMessageEdited = (data) => {
@@ -625,28 +646,14 @@ function GroupChat() {
 
       if (messageGroupId !== groupId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((m) =>
-          m._id === updated._id ? updated : m
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(replaceGroupMessage(updated));
     };
 
     const handleMessageDeleted = (data) => {
       const messageId = data?.messageId;
       if (!messageId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.filter(
-          (m) => m._id !== messageId
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(removeGroupMessage(messageId));
     };
 
     const handleGroupUpdated = (data) => {
@@ -677,42 +684,14 @@ function GroupChat() {
       const { messageId, playedBy, userId } = data || {};
       if (!messageId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((msg) => {
-          if (msg._id?.toString() !== messageId.toString()) {
-            return msg;
-          }
-
-          const existingPlayedIds = getPlayedIds(msg);
-          const existingReadIds = getReadIds(msg);
-          const nextPlayedIds = playedBy?.length
-            ? playedBy.map((id) => getId(id)).filter(Boolean)
-            : userId
-            ? Array.from(
-                new Set([...existingPlayedIds, userId.toString()])
-              )
-            : existingPlayedIds;
-
-          const nextReadIds = userId
-            ? Array.from(
-                new Set([...existingReadIds, userId.toString()])
-              )
-            : existingReadIds;
-
-          return {
-            ...msg,
-            playedBy: nextPlayedIds,
-            readBy: nextReadIds,
-            isPlayed:
-              userId?.toString() === currentUserId
-                ? true
-                : msg.isPlayed,
-          };
-        });
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(
+        updateGroupMessagePlayedBy({
+          messageId,
+          playedBy,
+          userId,
+          currentUserId,
+        })
+      );
     };
 
     const handleGroupMessagesRead = (data) => {
@@ -721,70 +700,33 @@ function GroupChat() {
 
       if (eventGroupId !== groupId || !userId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((msg) => {
-          const senderId = getId(msg.sender);
+      dispatch(markGroupMessagesReadByUser({ userId, currentUserId }));
+    };
 
-          if (senderId === userId || !senderId) return msg;
-          if (senderId !== currentUserId) return msg;
+    const handleGroupMessagesDelivered = (data) => {
+      const eventGroupId = data?.groupId?.toString();
+      const userId = data?.userId?.toString();
 
-          return {
-            ...msg,
-            readBy: Array.from(
-              new Set([...getReadIds(msg), userId])
-            ),
-          };
-        });
+      if (eventGroupId !== groupId || !userId) return;
 
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(
+        markGroupMessagesDeliveredToUser({
+          userId,
+          messageIds: data.messageIds,
+        })
+      );
     };
 
     const handleLocationUpdate = (data) => {
-      const { messageId, latitude, longitude, lastUpdatedAt } = data || {};
-      if (!messageId) return;
+      if (!data?.messageId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((m) =>
-          m._id === messageId
-            ? {
-                ...m,
-                location: {
-                  ...m.location,
-                  latitude,
-                  longitude,
-                  lastUpdatedAt,
-                },
-              }
-            : m
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(updateGroupMessageLocation(data));
     };
 
     const handleLocationShareStopped = (data) => {
-      const { messageId } = data || {};
-      if (!messageId) return;
+      if (!data?.messageId) return;
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((m) =>
-          m._id === messageId
-            ? {
-                ...m,
-                location: {
-                  ...m.location,
-                  isLive: false,
-                },
-              }
-            : m
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(stopGroupMessageLocation(data.messageId));
     };
 
     socket.on("new_message", handleNewMessage);
@@ -794,6 +736,7 @@ function GroupChat() {
     socket.on("member_left", handleMemberLeft);
     socket.on("audio_marked_played", handleAudioMarkedPlayed);
     socket.on("group_messages_read", handleGroupMessagesRead);
+    socket.on("group_messages_delivered", handleGroupMessagesDelivered);
     socket.on("location_update", handleLocationUpdate);
     socket.on("location_share_stopped", handleLocationShareStopped);
 
@@ -805,6 +748,7 @@ function GroupChat() {
       socket.off("member_left", handleMemberLeft);
       socket.off("audio_marked_played", handleAudioMarkedPlayed);
       socket.off("group_messages_read", handleGroupMessagesRead);
+      socket.off("group_messages_delivered", handleGroupMessagesDelivered);
       socket.off("location_update", handleLocationUpdate);
       socket.off("location_share_stopped", handleLocationShareStopped);
     };
@@ -833,10 +777,7 @@ function GroupChat() {
         return;
       }
 
-      if (
-        isNearBottomRef.current &&
-        !isLoadingOlderMessagesRef.current
-      ) {
+      if (isNearBottomRef.current && !isLoadingOlderMessagesRef.current) {
         scrollToBottom(false);
       }
     });
@@ -885,6 +826,7 @@ function GroupChat() {
     return () => observer.disconnect();
   }, [loadOlderMessages, loading]);
 
+  // If the first page doesn't fill the screen, load more until it does
   useEffect(() => {
     if (loading) return;
 
@@ -915,12 +857,14 @@ function GroupChat() {
       : 5 * 1024 * 1024;
 
     if (file.size > maxSize) {
-      setError(
-        isVideo
-          ? "Video must be less than 50 MB"
-          : isAudio
-          ? "Audio must be less than 10 MB"
-          : "File size must be less than 5 MB"
+      dispatch(
+        setGroupMessageError(
+          isVideo
+            ? "Video must be less than 50 MB"
+            : isAudio
+            ? "Audio must be less than 10 MB"
+            : "File size must be less than 5 MB"
+        )
       );
 
       e.target.value = "";
@@ -928,7 +872,7 @@ function GroupChat() {
     }
 
     setSelectedFile(file);
-    setError("");
+    dispatch(setGroupMessageError(""));
   };
 
   const removeSelectedFile = () => {
@@ -1007,9 +951,7 @@ function GroupChat() {
     video.srcObject = stream;
 
     video.onloadedmetadata = () => {
-      video.play().catch((err) =>
-        console.error("Video play error:", err)
-      );
+      video.play().catch((err) => console.error("Video play error:", err));
     };
 
     return () => {
@@ -1101,19 +1043,15 @@ function GroupChat() {
 
       if (!chunks.length) return;
 
-      const baseType = (mimeType || "video/webm")
-        .split(";")[0]
-        .trim();
+      const baseType = (mimeType || "video/webm").split(";")[0].trim();
 
       const blob = new Blob(chunks, { type: baseType });
 
       const extension = baseType.includes("mp4") ? "mp4" : "webm";
 
-      const file = new File(
-        [blob],
-        `video-${Date.now()}.${extension}`,
-        { type: baseType }
-      );
+      const file = new File([blob], `video-${Date.now()}.${extension}`, {
+        type: baseType,
+      });
 
       setSelectedFile(file);
     };
@@ -1175,23 +1113,15 @@ function GroupChat() {
 
     const context = canvas.getContext("2d");
 
-    context.drawImage(
-      video,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob(
       (blob) => {
         if (!blob) return;
 
-        const file = new File(
-          [blob],
-          `camera-${Date.now()}.jpg`,
-          { type: "image/jpeg" }
-        );
+        const file = new File([blob], `camera-${Date.now()}.jpg`, {
+          type: "image/jpeg",
+        });
 
         setSelectedFile(file);
         closeCamera();
@@ -1257,9 +1187,7 @@ function GroupChat() {
         }
 
         if (audioStreamRef.current) {
-          audioStreamRef.current
-            .getTracks()
-            .forEach((track) => track.stop());
+          audioStreamRef.current.getTracks().forEach((track) => track.stop());
           audioStreamRef.current = null;
         }
 
@@ -1273,9 +1201,7 @@ function GroupChat() {
           return;
         }
 
-        const baseType = (mimeType || "audio/webm")
-          .split(";")[0]
-          .trim();
+        const baseType = (mimeType || "audio/webm").split(";")[0].trim();
 
         const blob = new Blob(chunks, { type: baseType });
 
@@ -1285,11 +1211,9 @@ function GroupChat() {
           ? "m4a"
           : "webm";
 
-        const file = new File(
-          [blob],
-          `voice-${Date.now()}.${extension}`,
-          { type: baseType }
-        );
+        const file = new File([blob], `voice-${Date.now()}.${extension}`, {
+          type: baseType,
+        });
 
         sendGroupAudioMessage(file);
       };
@@ -1316,6 +1240,7 @@ function GroupChat() {
     }
   };
 
+  // Stops the recorder; onstop then sends the voice message
   const stopAudioRecording = () => {
     if (
       audioMediaRecorderRef.current &&
@@ -1325,20 +1250,7 @@ function GroupChat() {
     }
   };
 
-  const discardAudioRecording = () => {
-    audioDiscardedRef.current = true;
-    if (audioMediaRecorderRef.current?.state !== "inactive") {
-      audioMediaRecorderRef.current.stop();
-    }
-  };
-
-  const confirmAudioRecording = () => {
-    audioDiscardedRef.current = false;
-    if(audioMediaRecorderRef.current?.state !== "inactive") {
-      audioMediaRecorderRef.current.stop();
-    }
-  };
-
+  // Stops the recorder and throws the recording away
   const cancelAudioRecording = () => {
     audioDiscardedRef.current = true;
 
@@ -1355,9 +1267,7 @@ function GroupChat() {
     }
 
     if (audioStreamRef.current) {
-      audioStreamRef.current
-        .getTracks()
-        .forEach((track) => track.stop());
+      audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
     }
 
@@ -1376,39 +1286,26 @@ function GroupChat() {
   const sendGroupAudioMessage = async (file) => {
     try {
       setSending(true);
-      setError("");
+      dispatch(setGroupMessageError(""));
 
-      const data = await sendGroupMessage(
-        groupId,
-        "",
-        token,
-        file
-      );
+      const data = await sendGroupMessage(groupId, "", token, file);
 
-      setMessages((prev) => {
-        const alreadyExists = prev.some(
-          (m) => m._id === data.message._id
-        );
-
-        if (alreadyExists) return prev;
-
-        const updatedMessages = [...prev, data.message];
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(addGroupMessage(data.message));
 
       isNearBottomRef.current = true;
     } catch (err) {
       console.error("Send group audio error:", err);
-      setError(
-        err.response?.data?.message ||
-          "Failed to send voice message"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to send voice message"
+        )
       );
     } finally {
       setSending(false);
     }
   };
 
+  // Release camera / microphone / timers when leaving the screen
   useEffect(() => {
     return () => {
       if (
@@ -1427,6 +1324,9 @@ function GroupChat() {
       if (cameraStream) {
         cameraStream.getTracks().forEach((track) => track.stop());
       }
+
+      // Leaving the screen should not send a half-recorded voice message
+      audioDiscardedRef.current = true;
 
       if (
         audioMediaRecorderRef.current &&
@@ -1455,35 +1355,22 @@ function GroupChat() {
     try {
       setSending(true);
 
-      const data = await sendGroupMessage(
-        groupId,
-        text,
-        token,
-        selectedFile
-      );
+      const data = await sendGroupMessage(groupId, text, token, selectedFile);
 
-      setMessages((prev) => {
-        const alreadyExists = prev.some(
-          (m) => m._id === data.message._id
-        );
-
-        if (alreadyExists) return prev;
-
-        const updatedMessages = [...prev, data.message];
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(addGroupMessage(data.message));
 
       isNearBottomRef.current = true;
       setMessage("");
       setSelectedFile(null);
       setSelectedFilePreview(null);
-      setError("");
+      dispatch(setGroupMessageError(""));
     } catch (err) {
       console.error("Send group message error:", err);
 
-      setError(
-        err.response?.data?.message || "Failed to send message"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to send message"
+        )
       );
     } finally {
       setSending(false);
@@ -1570,8 +1457,7 @@ function GroupChat() {
     try {
       setSendingLocation(true);
 
-      const { latitude, longitude, isLive, durationMinutes } =
-        locationPreview;
+      const { latitude, longitude, isLive, durationMinutes } = locationPreview;
 
       const data = await sendGroupLocationMessage(
         groupId,
@@ -1582,32 +1468,21 @@ function GroupChat() {
         durationMinutes
       );
 
-      setMessages((prev) => {
-        const alreadyExists = prev.some(
-          (m) => m._id === data.message._id
-        );
-
-        if (alreadyExists) return prev;
-
-        const updatedMessages = [...prev, data.message];
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(addGroupMessage(data.message));
 
       isNearBottomRef.current = true;
 
       if (isLive) {
-        startLiveLocationTracking(
-          data.message._id,
-          durationMinutes
-        );
+        startLiveLocationTracking(data.message._id, durationMinutes);
       }
 
       setLocationPreview(null);
     } catch (err) {
       console.error("Send location error:", err);
-      setError(
-        err.response?.data?.message || "Failed to send location"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to send location"
+        )
       );
     } finally {
       setSendingLocation(false);
@@ -1654,23 +1529,18 @@ function GroupChat() {
     try {
       await deleteMessage(deleteMessageId, deleteFor, token);
 
-      setMessages((prev) => {
-        const updatedMessages = prev.filter(
-          (m) => m._id !== deleteMessageId
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(removeGroupMessage(deleteMessageId));
 
       setDeleteMessageId(null);
       setShowDeleteModal(false);
-      setError("");
+      dispatch(setGroupMessageError(""));
     } catch (err) {
       console.error("Delete message error:", err);
 
-      setError(
-        err.response?.data?.message || "Failed to delete message"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to delete message"
+        )
       );
     }
   };
@@ -1686,31 +1556,20 @@ function GroupChat() {
     if (!text || !editingMessageId) return;
 
     try {
-      const data = await editMessage(
-        editingMessageId,
-        text,
-        token
-      );
+      const data = await editMessage(editingMessageId, text, token);
 
-      setMessages((prev) => {
-        const updatedMessages = prev.map((m) =>
-          m._id === data.updatedMessage._id
-            ? data.updatedMessage
-            : m
-        );
-
-        messagesRef.current = updatedMessages;
-        return updatedMessages;
-      });
+      dispatch(replaceGroupMessage(data.updatedMessage));
 
       setMessage("");
       setEditingMessageId(null);
-      setError("");
+      dispatch(setGroupMessageError(""));
     } catch (err) {
       console.error("Edit message error:", err);
 
-      setError(
-        err.response?.data?.message || "Failed to edit message"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to edit message"
+        )
       );
     }
   };
@@ -1720,13 +1579,12 @@ function GroupChat() {
 
     try {
       setClearingChat(true);
-      setError("");
+      dispatch(setGroupMessageError(""));
 
       await clearGroupChatApi(groupId, token);
 
-      messagesRef.current = [];
-      setMessages([]);
-      setHasMoreMessages(false);
+      dispatch(clearGroupMessages());
+      dispatch(setHasMoreGroupMessages(false));
       hasMoreMessagesRef.current = false;
 
       dispatch(clearGroupChat(groupId));
@@ -1739,8 +1597,10 @@ function GroupChat() {
     } catch (err) {
       console.error("Clear group chat error:", err);
 
-      setError(
-        err.response?.data?.message || "Failed to clear chat"
+      dispatch(
+        setGroupMessageError(
+          err.response?.data?.message || "Failed to clear chat"
+        )
       );
     } finally {
       setClearingChat(false);
@@ -1776,9 +1636,7 @@ function GroupChat() {
       window.URL.revokeObjectURL(url);
 
       if (messageId) {
-        setDownloadedMessageIds(
-          (prev) => new Set(prev).add(messageId)
-        );
+        setDownloadedMessageIds((prev) => new Set(prev).add(messageId));
       }
     } catch (err) {
       console.error("File download error:", err);
@@ -1790,13 +1648,9 @@ function GroupChat() {
 
     const fileName = msg.fileName?.toLowerCase() || "";
 
-    return [
-      ".jpg",
-      ".jpeg",
-      ".png",
-      ".webp",
-      ".gif",
-    ].some((ext) => fileName.endsWith(ext));
+    return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) =>
+      fileName.endsWith(ext)
+    );
   };
 
   const isAudioMessage = (msg) => {
@@ -1804,37 +1658,25 @@ function GroupChat() {
 
     const fileName = msg.fileName?.toLowerCase() || "";
 
-    return [
-      ".mp3",
-      ".wav",
-      ".ogg",
-      ".m4a",
-      ".aac",
-      ".webm",
-    ].some((ext) => fileName.endsWith(ext));
+    return [".mp3", ".wav", ".ogg", ".m4a", ".aac", ".webm"].some((ext) =>
+      fileName.endsWith(ext)
+    );
   };
-  
+
   const isVideoMessage = (msg) => {
-    if(isAudioMessage(msg)) return false;
+    if (isAudioMessage(msg)) return false;
     if (msg.messageType === "video") return true;
 
     const fileName = msg.fileName?.toLowerCase() || "";
 
-    return [
-      ".mp4",
-      ".webm",
-      ".mov",
-      ".avi",
-      ".mkv",
-    ].some((ext) => fileName.endsWith(ext));
+    return [".mp4", ".webm", ".mov", ".avi", ".mkv"].some((ext) =>
+      fileName.endsWith(ext)
+    );
   };
 
+  const isLocationMessage = (msg) => msg.messageType === "location";
 
-  const isLocationMessage = (msg) =>
-    msg.messageType === "location";
-
-  const getFileUrl = (msg) =>
-    `${API_BASE_URL}${msg.fileUrl}`;
+  const getFileUrl = (msg) => `${API_BASE_URL}${msg.fileUrl}`;
 
   const getMessageTime = (msg) =>
     new Date(msg.createdAt).toLocaleTimeString([], {
@@ -1843,9 +1685,8 @@ function GroupChat() {
     });
 
   const getMessageReadCount = (msg) =>
-    getReadRecipients(msg).filter(
-      (member) => getId(member) !== currentUserId
-    ).length;
+    getReadRecipients(msg).filter((member) => getId(member) !== currentUserId)
+      .length;
 
   if (loading) {
     return (
@@ -1957,9 +1798,7 @@ function GroupChat() {
           className="h-full overflow-y-auto p-4"
         >
           {error && (
-            <p className="text-center text-red-500 text-sm mb-3">
-              {error}
-            </p>
+            <p className="text-center text-red-500 text-sm mb-3">{error}</p>
           )}
 
           {messages.length === 0 ? (
@@ -1985,7 +1824,9 @@ function GroupChat() {
                 const locationMessage = isLocationMessage(msg);
 
                 const senderName = msg.sender?.name || "Unknown";
-                const messageRead = hasOtherReaders(msg);
+                const tickStatus = getTickStatus(msg);
+                const messageRead = tickStatus === "read";
+                const messageDelivered = tickStatus !== "sent";
                 const readCount = getMessageReadCount(msg);
 
                 const nonBubbleMessage =
@@ -2012,8 +1853,12 @@ function GroupChat() {
                         </span>
                       )}
 
-                      <div className="flex items-end gap-2">
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity order-2">
+                      <div className="relative flex items-end">
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ${
+                            isMine ? "right-full pr-2" : "left-full pl-2"
+                          }`}
+                        >
                           {isMine && msg.messageType === "text" && (
                             <button
                               type="button"
@@ -2052,14 +1897,10 @@ function GroupChat() {
                               src={getFileUrl(msg)}
                               isMine={isMine}
                               isRead={messageRead}
-                              isDelivered={
-                                msg.isDelivered || messageRead
-                              }
-                              isPlayed={
-                                getPlayedIds(msg).includes(
-                                  currentUserId
-                                )
-                              }
+                              isDelivered={messageDelivered}
+                              isPlayed={getPlayedIds(msg).includes(
+                                currentUserId
+                              )}
                               messageId={msg._id}
                               time={getMessageTime(msg)}
                               onOpenReadRecipients={() =>
@@ -2094,9 +1935,7 @@ function GroupChat() {
                                     }`}
                                     title="Read recipients"
                                   >
-                                    {msg.isDelivered || messageRead
-                                      ? "✓✓"
-                                      : "✓"}
+                                    {messageDelivered ? "✓✓" : "✓"}
                                   </button>
                                 )}
 
@@ -2129,10 +1968,7 @@ function GroupChat() {
                                 alt={msg.fileName || "Image"}
                                 className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
                                 onClick={() =>
-                                  window.open(
-                                    getFileUrl(msg),
-                                    "_blank"
-                                  )
+                                  window.open(getFileUrl(msg), "_blank")
                                 }
                               />
 
@@ -2152,9 +1988,7 @@ function GroupChat() {
                                     }`}
                                     title="Read recipients"
                                   >
-                                    {msg.isDelivered || messageRead
-                                      ? "✓✓"
-                                      : "✓"}
+                                    {messageDelivered ? "✓✓" : "✓"}
                                   </button>
                                 )}
 
@@ -2256,17 +2090,13 @@ function GroupChat() {
                           {msg.messageType !== "text" &&
                             !audioMessage &&
                             msg.text && (
-                              <p className="break-words mt-2">
-                                {msg.text}
-                              </p>
+                              <p className="break-words mt-2">{msg.text}</p>
                             )}
 
                           {msg.isEdited && (
                             <p
                               className={`text-xs mt-1 ${
-                                isMine
-                                  ? "text-green-100"
-                                  : "text-gray-400"
+                                isMine ? "text-green-100" : "text-gray-400"
                               }`}
                             >
                               Edited
@@ -2276,9 +2106,7 @@ function GroupChat() {
                           {!nonBubbleMessage && (
                             <div
                               className={`text-xs mt-1 flex items-center justify-end gap-1 ${
-                                isMine
-                                  ? "text-green-100"
-                                  : "text-gray-400"
+                                isMine ? "text-green-100" : "text-gray-400"
                               }`}
                             >
                               <span>{getMessageTime(msg)}</span>
@@ -2294,15 +2122,12 @@ function GroupChat() {
                                   }`}
                                   title="Read recipients"
                                 >
-                                  {msg.isDelivered || messageRead
-                                    ? "✓✓"
-                                    : "✓"}
+                                  {messageDelivered ? "✓✓" : "✓"}
                                 </button>
                               )}
                             </div>
                           )}
                         </div>
-                        
                       </div>
 
                       {isMine && readCount > 0 && (
@@ -2382,10 +2207,7 @@ function GroupChat() {
               ) : (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <FileText
-                      size={18}
-                      className="text-gray-500 shrink-0"
-                    />
+                    <FileText size={18} className="text-gray-500 shrink-0" />
 
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">
@@ -2422,20 +2244,21 @@ function GroupChat() {
                 <span className="text-gray-500 text-sm truncate">
                   Recording voice message...
                 </span>
+
                 <div className="ml-auto flex items-center gap-2 shrink-0">
-                  <button 
-                     type="button"
-                     onClick={cancelAudioRecording}
-                     className="text-gray-500 hover:text-red-500"
-                     title="Cancel recording"
+                  <button
+                    type="button"
+                    onClick={cancelAudioRecording}
+                    className="text-gray-500 hover:text-red-500"
+                    title="Cancel recording"
                   >
                     <X size={20} />
                   </button>
-                  <button 
-                     type="button"
-                     onClick={stopAudioRecording}
-                     className="w-9 h-9 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600"
-                     title="Send voice message"
+                  <button
+                    type="button"
+                    onClick={stopAudioRecording}
+                    className="w-9 h-9 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600"
+                    title="Send voice message"
                   >
                     <Send size={16} />
                   </button>
@@ -2446,9 +2269,7 @@ function GroupChat() {
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() =>
-                      setShowEmojiPicker((prev) => !prev)
-                    }
+                    onClick={() => setShowEmojiPicker((prev) => !prev)}
                     className="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-gray-200 transition"
                     title="Emoji"
                   >
@@ -2469,9 +2290,7 @@ function GroupChat() {
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() =>
-                      setShowAttachMenu((prev) => !prev)
-                    }
+                    onClick={() => setShowAttachMenu((prev) => !prev)}
                     className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
                       showAttachMenu
                         ? "bg-gray-200 text-gray-800"
@@ -2663,7 +2482,8 @@ function GroupChat() {
                   Read by
                 </h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  {getMessageReadCount(readRecipientsMessage)} of {Math.max((group.members?.length || 1) - 1, 0)} members
+                  {getMessageReadCount(readRecipientsMessage)} of{" "}
+                  {Math.max((group.members?.length || 1) - 1, 0)} members
                 </p>
               </div>
 
@@ -2800,7 +2620,8 @@ function GroupChat() {
             </h3>
 
             <p className="text-sm text-gray-500 mb-5">
-              This will clear all messages from this chat for you. Other group members will still see their messages.
+              This will clear all messages from this chat for you. Other group
+              members will still see their messages.
             </p>
 
             <div className="space-y-2">
@@ -2833,9 +2654,7 @@ function GroupChat() {
             <div className="absolute top-0 left-0 right-0 z-20 px-5 py-5 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent">
               <div>
                 <h2 className="text-white text-lg font-semibold">
-                  {cameraMode === "video"
-                    ? "Record Video"
-                    : "Take Photo"}
+                  {cameraMode === "video" ? "Record Video" : "Take Photo"}
                 </h2>
 
                 <p className="text-white/70 text-xs mt-1">

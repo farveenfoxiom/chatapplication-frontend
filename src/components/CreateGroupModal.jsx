@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { createGroup } from "../services/groupService";
 import { searchUsers } from "../services/userService";
 
-const API_BASE_URL = "http://localhost:5000";
+import { API_BASE_URL, SOCKET_URL } from "../config";
 
 // Drop this into Home.jsx (or wherever your 1:1 contact list already
 // lives). `users` is the default suggested list shown before the person
