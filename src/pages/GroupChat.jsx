@@ -1679,7 +1679,7 @@ function GroupChat() {
 
   const isLocationMessage = (msg) => msg.messageType === "location";
 
-  const getFileIcon = (msg) => {
+  const getFileUrl = (msg) => {
     if (!msg.fileUrl) return "";
     if (msg.fileUrl.startsWith("http")) return msg.fileUrl;
     return `${API_BASE_URL}${msg.fileUrl}`;

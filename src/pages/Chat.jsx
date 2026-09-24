@@ -1321,7 +1321,7 @@ function Chat() {
 
   const getFileUrl = (msg) => {
     if (!msg.fileUrl) return "";
-    if (!msg.fileUrl.startsWith("http")) return msg.fileUrl;
+    if (msg.fileUrl.startsWith("http")) return msg.fileUrl;
     return `${API_BASE_URL}${msg.fileUrl}`;
   };
 
