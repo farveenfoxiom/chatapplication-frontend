@@ -4,6 +4,8 @@ import { useSelector } from "react-redux";
 
 import { API_BASE_URL, SOCKET_URL } from "../config"; 
 
+import { getImageUrl } from "../utils/getImageUrl";
+
 function Navbar() {
   const user = useSelector((state) => state.auth.user); 
 
@@ -23,7 +25,7 @@ function Navbar() {
         <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
           {user?.profileImage ? (
             <img
-              src={`${API_BASE_URL}${user.profileImage}`}
+              src={getImageUrl(user.profileImage)}
               alt={user.name}
               className="w-10 h-10 rounded-full object-cover"
             />

@@ -6,6 +6,7 @@ import { searchUsers } from "../services/userService";
 import { useSelector } from "react-redux";
 
 import { API_BASE_URL, SOCKET_URL } from "../config"; 
+import { getImageUrl } from "../utils/getImageUrl";
 
 function SearchUsers() {
   const navigate = useNavigate();
@@ -149,7 +150,7 @@ function SearchUsers() {
                 <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center shrink-0">
                   {user.profileImage ? (
                     <img
-                      src={`${API_BASE_URL}${user.profileImage}`}
+                      src={getImageUrl(user.profileImage)}
                       alt={user.name}
                       className="w-12 h-12 rounded-full object-cover"/>
                   ) : (

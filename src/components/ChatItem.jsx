@@ -1,6 +1,8 @@
 import { User, Trash2 } from "lucide-react";
 import { API_BASE_URL, SOCKET_URL } from "../config";
 
+import { getImageUrl } from "../utils/getImageUrl";
+
 function ChatItem({ chat, onClick, onDelete }) {
   const handleDelete = (e) => {
     e.stopPropagation();
@@ -13,7 +15,7 @@ function ChatItem({ chat, onClick, onDelete }) {
       <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center shrink-0 overflow-hidden">
         {chat.profileImage ? (
           <img
-            src={`${API_BASE_URL}${chat.profileImage}`}
+            src={getImageUrl(chat.profileImage)}
             alt={chat.name}
             className="w-12 h-12 rounded-full object-cover"
           />

@@ -65,6 +65,7 @@ import {
 import { API_BASE_URL, SOCKET_URL } from "../config"; 
 const MESSAGE_LIMIT = 20;
 
+import { getImageUrl } from "../utils/getImageUrl";
 
 const AudioPlayer = ({
   src,
@@ -1621,7 +1622,9 @@ function GroupChat() {
 
   const downloadFile = async (fileUrl, fileName, messageId) => {
     try {
-      const response = await fetch(`${API_BASE_URL}${fileUrl}`);
+      const response = await fetch (
+        fileUrl.startsWith("http") ? fileUrl : `${API_BASE_URL}${fileUrl}`
+      );
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -1676,7 +1679,11 @@ function GroupChat() {
 
   const isLocationMessage = (msg) => msg.messageType === "location";
 
-  const getFileUrl = (msg) => `${API_BASE_URL}${msg.fileUrl}`;
+  const getFileIcon = (msg) => {
+    if (!msg.fileUrl) return "";
+    if (msg.fileUrl.startsWith("http")) return msg.fileUrl;
+    return `${API_BASE_URL}${msg.fileUrl}`;
+  };
 
   const getMessageTime = (msg) =>
     new Date(msg.createdAt).toLocaleTimeString([], {
@@ -1731,7 +1738,7 @@ function GroupChat() {
           <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
             {group.groupImage ? (
               <img
-                src={`${API_BASE_URL}${group.groupImage}`}
+                src={getImageUrl(group.groupImage)}
                 alt={group.name}
                 className="w-10 h-10 rounded-full object-cover"
               />
@@ -2507,7 +2514,7 @@ function GroupChat() {
                     <div className="w-10 h-10 rounded-full bg-green-100 overflow-hidden flex items-center justify-center shrink-0">
                       {member.profileImage ? (
                         <img
-                          src={`${API_BASE_URL}${member.profileImage}`}
+                          src={getImageUrl(member.profileImage)}
                           alt={member.name}
                           className="w-full h-full object-cover"
                         />

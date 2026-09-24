@@ -12,6 +12,7 @@ import { getMe, updateMe , uploadProfileImage } from "../services/userService";
 import { useSelector,useDispatch } from "react-redux";
 import { updateUser,logout } from "../redux/slices/authSlice";
 import { API_BASE_URL, SOCKET_URL } from "../config"; 
+import { getImageUrl } from "../utils/getImageUrl";
 
 function Profile() {
   const navigate = useNavigate();
@@ -158,7 +159,7 @@ function Profile() {
             <div className="relative">
               {formData.profileImage ? (
                 <img
-                  src={`${API_BASE_URL}${formData.profileImage}`}
+                  src={getImageUrl(formData.profileImage)}
                   alt="Profile"
                   className="w-28 h-28 rounded-full object-cover"
                 />

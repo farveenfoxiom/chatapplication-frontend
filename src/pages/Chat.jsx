@@ -52,6 +52,7 @@ import {
 
 import { API_BASE_URL, SOCKET_URL } from "../config"; 
 
+import { getImageUrl } from "../utils/getImageUrl";
 const AudioPlayer = ({
   src,
   isMine,
@@ -1270,7 +1271,9 @@ function Chat() {
 
   const downloadFile = async (fileUrl, fileName, messageId) => {
     try {
-      const response = await fetch(`${API_BASE_URL}${fileUrl}`);
+      const response = await fetch(
+        fileUrl.startsWith("http")? fileUrl : `${API_BASE_URL}${fileUrl}`
+      );
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
 
@@ -1316,7 +1319,11 @@ function Chat() {
 
   const isLocationMessage = (msg) => msg.messageType === "location";
 
-  const getFileUrl = (msg) => `${API_BASE_URL}${msg.fileUrl}`;
+  const getFileUrl = (msg) => {
+    if (!msg.fileUrl) return "";
+    if (!msg.fileUrl.startsWith("http")) return msg.fileUrl;
+    return `${API_BASE_URL}${msg.fileUrl}`;
+  };
 
   if (loading) {
     return (
@@ -1355,7 +1362,7 @@ function Chat() {
         <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden">
           {chatUser.profileImage ? (
             <img
-              src={`${API_BASE_URL}${chatUser.profileImage}`}
+              src={getImageUrl(chatUser.profileImage)}
               alt={chatUser.name}
               className="w-10 h-10 rounded-full object-cover"
             />

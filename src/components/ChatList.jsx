@@ -39,11 +39,7 @@ import {
 import socket from "../socket/socket";
 import { API_BASE_URL, SOCKET_URL } from "../config";
 
-function getImageUrl(image) {
-  if (!image) return "";
-  if (image.startsWith("http")) return image;
-  return `${API_BASE_URL}${image}`;
-}
+import { getImageUrl } from "../utils/getImageUrl";
 
 function ChatList() {
   const [search, setSearch] = useState("");

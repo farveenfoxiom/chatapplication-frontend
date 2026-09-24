@@ -6,21 +6,8 @@ import { searchUsers } from "../services/userService";
 
 import { API_BASE_URL, SOCKET_URL } from "../config";
 
-// Drop this into Home.jsx (or wherever your 1:1 contact list already
-// lives). `users` is the default suggested list shown before the person
-// types anything (e.g. your existing chats) — once they type, this
-// component calls the real /users/search endpoint instead.
-//
-// Usage:
-//   const [showCreateGroup, setShowCreateGroup] = useState(false);
-//   <button onClick={() => setShowCreateGroup(true)}>New Group</button>
-//   {showCreateGroup && (
-//     <CreateGroupModal
-//       users={contacts}          // default suggestions (e.g. recent chats)
-//       token={token}
-//       onClose={() => setShowCreateGroup(false)}
-//     />
-//   )}
+import { getImageUrl } from "../utils/getImageUrl";
+
 function CreateGroupModal({ users = [], token, onClose }) {
   const navigate = useNavigate();
 
@@ -33,9 +20,6 @@ function CreateGroupModal({ users = [], token, onClose }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // Debounced search against the real endpoint, same one SearchUsers.jsx
-  // uses. Clearing the box falls back to the default `users` suggestions
-  // instead of calling the API with an empty query.
   useEffect(() => {
     if (memberSearch.trim() === "") {
       setSearchResults(null);
@@ -220,7 +204,7 @@ function CreateGroupModal({ users = [], token, onClose }) {
                     <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center overflow-hidden shrink-0">
                       {user.profileImage ? (
                         <img
-                          src={`${API_BASE_URL}${user.profileImage}`}
+                          src={getImageUrl(user.profileImage)}
                           alt={user.name}
                           className="w-10 h-10 rounded-full object-cover"
                         />
