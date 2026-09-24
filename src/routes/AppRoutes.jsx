@@ -6,7 +6,7 @@ import Home from "../pages/Home";
 import SearchUsers from "../pages/SearchUsers";
 import Profile from "../pages/Profile";
 import Chat from "../pages/Chat";
-import GroupChat from "../pages/groupChat";
+import GroupChat from "../pages/GroupChat";
 import GroupInfo from "../pages/GroupInfo";
 
 import ProtectedRoute from "./ProtectedRoute";
