@@ -41,7 +41,7 @@ import {
   setError,
 } from "../redux/slices/messageSlice";
 import LocationMap from "../components/LocationMap";
-import ShareLocationModal from "../components/shareLocationModal";
+import ShareLocationModal from "../components/ShareLocationModal";
 import LocationPreviewModal from "../components/LocationPreviewModal";
 
 import {
