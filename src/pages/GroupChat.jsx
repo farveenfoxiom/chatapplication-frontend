@@ -32,7 +32,7 @@ import {
 } from "../services/groupService";
 import { getUserById } from "../services/userService";
 import LocationMap from "../components/LocationMap";
-import ShareLocationModal from "../components/shareLocationModal";
+import ShareLocationModal from "../components/ShareLocationModal";
 import LocationPreviewModal from "../components/LocationPreviewModal";
 import { deleteMessage, editMessage } from "../services/messageService";
 import socket from "../socket/socket";
