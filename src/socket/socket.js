@@ -2,7 +2,7 @@ import { io } from "socket.io-client";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL ||
-  "https://chatapplication-backend-qrxy.onrender.com/api";
+  "https://chatapplication-backend-qrxy.onrender.com";
 
 const socket = io(SOCKET_URL, {
   autoConnect: false,
