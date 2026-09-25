@@ -1435,23 +1435,36 @@ function Chat() {
                 const imageMessage = isImageMessage(msg);
                 const locationMessage = isLocationMessage(msg);
 
+                const isMedia =
+                  imageMessage || videoMessage || locationMessage || audioMessage;
+
                 return (
                   <div
                     key={msg._id}
-                    className={`flex ${
-                      isMine ? "justify-end" : "justify-start"
-                    }`}
+                    className={`flex ${isMine ? "justify-end" : "justify-start"}`}
                   >
-                    <div className="group flex items-end gap-2">
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* relative wrapper: action icons are absolutely positioned inside it,
+                        so they never steal width from the bubble on small screens */}
+                    <div className="group relative max-w-[85%] sm:max-w-[75%]">
+                      {/* Edit / Delete icons.
+                          - Always visible on touch/mobile (no hover state exists there)
+                          - Hover-reveal only on md+ where a real cursor exists
+                          - Positioned above the bubble via `absolute` so it never
+                            squeezes bubble width or wraps text oddly */}
+                      <div
+                        className={`absolute -top-7 flex items-center gap-1 z-10
+                          opacity-100 md:opacity-0 md:group-hover:opacity-100
+                          transition-opacity
+                          ${isMine ? "right-0" : "left-0"}`}
+                      >
                         {isMine && msg.messageType === "text" && (
                           <button
                             type="button"
                             onClick={() => startEditingMessage(msg)}
                             title="Edit message"
-                            className="text-gray-400 hover:text-green-500 p-1"
+                            className="w-7 h-7 rounded-full bg-white shadow border border-gray-200 flex items-center justify-center text-gray-500 hover:text-green-500 hover:border-green-300 transition"
                           >
-                            <Pencil size={16} />
+                            <Pencil size={14} />
                           </button>
                         )}
 
@@ -1459,25 +1472,22 @@ function Chat() {
                           type="button"
                           onClick={() => handleDeleteMessage(msg._id)}
                           title="Delete message"
-                          className="text-gray-400 hover:text-red-500 p-1"
+                          className="w-7 h-7 rounded-full bg-white shadow border border-gray-200 flex items-center justify-center text-gray-500 hover:text-red-500 hover:border-red-300 transition"
                         >
-                          <Trash size={16} />
+                          <Trash size={14} />
                         </button>
                       </div>
 
                       <div
-                        className={`${
-                          imageMessage ||
-                          videoMessage ||
-                          locationMessage ||
-                          audioMessage
+                        className={
+                          isMedia
                             ? "relative"
-                            : `max-w-xs md:max-w-md px-4 py-2 rounded-2xl ${
+                            : `px-3 py-2 sm:px-4 sm:py-2 rounded-2xl text-sm sm:text-base leading-snug ${
                                 isMine
                                   ? "bg-green-500 text-white rounded-br-md"
                                   : "bg-white text-gray-800 rounded-bl-md"
                               }`
-                        }`}
+                        }
                       >
                         {/* 1. AUDIO MESSAGE */}
                         {audioMessage && msg.fileUrl ? (
@@ -1488,10 +1498,10 @@ function Chat() {
                             isDelivered={msg.isDelivered}
                             isPlayed={msg.isPlayed}
                             messageId={msg._id}
-                            time={new Date(msg.createdAt).toLocaleTimeString(
-                              [],
-                              { hour: "2-digit", minute: "2-digit" }
-                            )}
+                            time={new Date(msg.createdAt).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           />
                         ) : videoMessage && msg.fileUrl ? (
                           /* 2. VIDEO MESSAGE */
@@ -1500,22 +1510,18 @@ function Chat() {
                               src={getFileUrl(msg)}
                               controls
                               preload="metadata"
-                              className="max-w-xs md:max-w-sm max-h-80 rounded-2xl bg-black"
+                              className="w-full max-w-[80vw] sm:max-w-sm max-h-80 rounded-2xl bg-black"
                             />
 
-                            <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full pointer-events-none">
+                            <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 flex items-center gap-1 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full pointer-events-none">
                               <span>
-                                {new Date(msg.createdAt).toLocaleTimeString(
-                                  [],
-                                  { hour: "2-digit", minute: "2-digit" }
-                                )}
+                                {new Date(msg.createdAt).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
                               </span>
                               {isMine && (
-                                <span
-                                  className={
-                                    msg.isRead ? "text-blue-400" : "text-white"
-                                  }
-                                >
+                                <span className={msg.isRead ? "text-blue-400" : "text-white"}>
                                   {msg.isDelivered ? "✓✓" : "✓"}
                                 </span>
                               )}
@@ -1527,25 +1533,19 @@ function Chat() {
                             <img
                               src={getFileUrl(msg)}
                               alt={msg.fileName || "Image"}
-                              className="max-w-xs md:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
-                              onClick={() =>
-                                window.open(getFileUrl(msg), "_blank")
-                              }
+                              className="w-full max-w-[80vw] sm:max-w-sm max-h-80 rounded-2xl object-cover cursor-pointer"
+                              onClick={() => window.open(getFileUrl(msg), "_blank")}
                             />
 
                             <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full">
                               <span>
-                                {new Date(msg.createdAt).toLocaleTimeString(
-                                  [],
-                                  { hour: "2-digit", minute: "2-digit" }
-                                )}
+                                {new Date(msg.createdAt).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
                               </span>
                               {isMine && (
-                                <span
-                                  className={
-                                    msg.isRead ? "text-blue-400" : "text-white"
-                                  }
-                                >
+                                <span className={msg.isRead ? "text-blue-400" : "text-white"}>
                                   {msg.isDelivered ? "✓✓" : "✓"}
                                 </span>
                               )}
@@ -1559,16 +1559,16 @@ function Chat() {
                             isLive={msg.location.isLive}
                             expiresAt={msg.location.liveExpiresAt}
                             isMine={isMine}
-                            onStopSharing={()=> handleStopSharingLocation(msg._id)}
-                            time={new Date(msg.createdAt).toLocaleTimeString(
-                              [],
-                              { hour: "2-digit", minute: "2-digit" }
-                            )}
+                            onStopSharing={() => handleStopSharingLocation(msg._id)}
+                            time={new Date(msg.createdAt).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           />
                         ) : msg.messageType === "file" && msg.fileUrl ? (
                           /* 5. GENERIC FILE / DOCUMENT */
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600">
+                            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 shrink-0">
                               <FileText size={20} />
                             </div>
 
@@ -1592,14 +1592,10 @@ function Chat() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  downloadFile(
-                                    msg.fileUrl,
-                                    msg.fileName,
-                                    msg._id
-                                  )
+                                  downloadFile(msg.fileUrl, msg.fileName, msg._id)
                                 }
                                 title="Download file"
-                                className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 hover:bg-gray-300"
+                                className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 hover:bg-gray-300 shrink-0"
                               >
                                 <Download size={18} />
                               </button>
@@ -1610,13 +1606,8 @@ function Chat() {
                         {/* TEXT CONTENT */}
                         {msg.text && (
                           <p
-                            className={`break-words ${
-                              audioMessage ||
-                              videoMessage ||
-                              imageMessage ||
-                              locationMessage
-                                ? "p-2"
-                                : ""
+                            className={`break-words whitespace-pre-wrap ${
+                              isMedia ? "p-2" : ""
                             }`}
                           >
                             {msg.text}
@@ -1625,7 +1616,7 @@ function Chat() {
 
                         {msg.isEdited && (
                           <p
-                            className={`text-xs mt-1 ${
+                            className={`text-[11px] mt-0.5 ${
                               isMine ? "text-green-100" : "text-gray-400"
                             }`}
                           >
@@ -1634,35 +1625,30 @@ function Chat() {
                         )}
 
                         {/* TEXT/FILE FOOTER TIMESTAMPS */}
-                        {!imageMessage &&
-                          !videoMessage &&
-                          !locationMessage &&
-                          !audioMessage && (
-                            <div
-                              className={`text-xs mt-1 flex items-center justify-end gap-1 ${
-                                isMine ? "text-green-100" : "text-gray-400"
-                              }`}
-                            >
-                              <span>
-                                {new Date(msg.createdAt).toLocaleTimeString(
-                                  [],
-                                  { hour: "2-digit", minute: "2-digit" }
-                                )}
-                              </span>
+                        {!isMedia && (
+                          <div
+                            className={`text-[10px] sm:text-xs mt-1 flex items-center justify-end gap-1 ${
+                              isMine ? "text-green-100" : "text-gray-400"
+                            }`}
+                          >
+                            <span>
+                              {new Date(msg.createdAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
 
-                              {isMine && (
-                                <span
-                                  className={`${
-                                    msg.isRead
-                                      ? "text-blue-500"
-                                      : "text-green-100"
-                                  } tracking-[-3px]`}
-                                >
-                                  {msg.isDelivered ? "✓✓" : "✓"}
-                                </span>
-                              )}
-                            </div>
-                          )}
+                            {isMine && (
+                              <span
+                                className={`${
+                                  msg.isRead ? "text-blue-500" : "text-green-100"
+                                } tracking-[-3px]`}
+                              >
+                                {msg.isDelivered ? "✓✓" : "✓"}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -37,7 +37,6 @@ import {
 } from "../redux/slices/groupSlice";
 
 import socket from "../socket/socket";
-import { API_BASE_URL, SOCKET_URL } from "../config";
 
 import { getImageUrl } from "../utils/getImageUrl";
 
