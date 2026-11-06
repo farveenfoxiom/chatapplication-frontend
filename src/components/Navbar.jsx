@@ -2,8 +2,6 @@ import { MessageCircle, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSelector } from "react-redux"; 
 
-import { API_BASE_URL, SOCKET_URL } from "../config"; 
-
 import { getImageUrl } from "../utils/getImageUrl";
 
 function Navbar() {

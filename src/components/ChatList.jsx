@@ -110,7 +110,11 @@ function ChatList() {
         console.error("Failed to fetch chats:", error);
 
         dispatch(
-          setError(error.response?.data?.message || "Failed to load chats")
+          setError(
+            error.code === "ECONNABORTED"
+              ? "Chat service is taking too long. Please try again."
+              : error.response?.data?.message || "Failed to load chats"
+          )
         );
       } finally {
         dispatch(setLoading(false));

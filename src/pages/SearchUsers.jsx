@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { searchUsers } from "../services/userService";
 import { useSelector } from "react-redux";
 
-import { API_BASE_URL, SOCKET_URL } from "../config"; 
 import { getImageUrl } from "../utils/getImageUrl";
 
 function SearchUsers() {
