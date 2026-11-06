@@ -112,7 +112,7 @@ function ChatList() {
         dispatch(
           setError(
             error.code === "ECONNABORTED"
-              ? "Chat service is taking too long. Please try again."
+              ? "Chat service did not respond in time. Please try again."
               : error.response?.data?.message || "Failed to load chats"
           )
         );
